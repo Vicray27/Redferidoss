@@ -4,7 +4,8 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       TZ: ${TZ_DEFAULT:-America/Caracas}
     depends_on:
