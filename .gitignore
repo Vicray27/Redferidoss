@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# env (never commit real secrets)
+.env
+.env*.local
+
+# logs / debug
+*.log
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# test / coverage artifacts (generated, PR4+)
+coverage/
+playwright-report/
+test-results/
+.turbo/
+
+# prisma generated client (PR3+)
+# (kept commented until the client is generated)
+# generated/
