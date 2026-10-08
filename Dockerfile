@@ -11,7 +11,7 @@ WORKDIR /app
 RUN npm install -g pnpm@12
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm build
+RUN mkdir -p ./public && pnpm build
 
 # ---- runner: minimal production image ----
 FROM node:24-alpine AS runner
