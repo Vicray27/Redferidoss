@@ -170,3 +170,56 @@ resuelve hacia lo más configurable (spec §18.7).
 - Consecuencias: la ruta valida el secreto ANTES de resolver `{job}`, así que
   un llamador sin credenciales no puede enumerar qué jobs existen. F7 elige
   cuál de las dos formas usa su scheduler sin tocar la ruta.
+
+## F2 — autenticación real (login)
+
+> La numeración arranca en D14: D8 y D9 ya estaban usados por F1.
+
+### D14 — `users.email` (CITEXT) se lee con `$queryRaw`, no con un campo espejo
+- Contexto: `users.email` es `CITEXT` y `prisma/schema.prisma` lo declara
+  `Unsupported("citext")`. Prisma Client **excluye** los campos `Unsupported`
+  del modelo generado, así que `findUnique({ where: { email } })` y
+  `create({ data: { email } })` no compilan. Es la razón por la que F1 dejó el
+  lookup "pendiente de resolver antes de F2" (ver el header de schema.prisma).
+- Opciones: (a) `$queryRaw` parametrizado con cast `::citext` explícito;
+  (b) agregar un campo `emailMirror String @db.Text` que Prisma sí pueda
+  leer; (c) cambiar la columna a `TEXT`.
+- Decisión: **(a)**. `lib/users.ts` centraliza los dos accesos necesarios
+  (`findByEmail`, `findByPublicCode`) sobre `$queryRaw` etiquetado, así que
+  todo valor viaja como parámetro de enlace y nunca concatenado. La
+  comparación se normaliza en los dos lados: `normalizeEmail` en la app
+  (`trim().toLowerCase()`, testeable sin base de datos) y `::citext` en SQL,
+  de modo que el resultado no depende de que el llamador recuerde normalizar.
+- Por qué no (b) ni (c): ambas hacen que Prisma tipifique la columna como
+  `text`, y una columna `text` **pierde** la comparación insensible a mayúsculas
+  que hace única `uq_users_email`. Un `emailMirror` además duplicaría el dato
+  sin ninguna constraint que los mantuviera sincronizados. Se cambiaría un
+  inconveniente conocido por un bug silencioso. `lib/tree.ts#insertUser` y
+  `prisma/seed.ts` ya son raw por la misma razón; la regla es "CITEXT y LTREE
+  se acceden por `$queryRaw`".
+- Consecuencias: `AuthUserRow` (incluye `passwordHash`) es un tipo distinto
+  de `ProfileUserRow`, y solo `findByEmail` lo devuelve, para que el hash no
+  llegue por accidente a una página. `deleted_at IS NULL` se filtra en SQL, no
+  en el llamador: un usuario borrado debe ser indistinguible de uno inexistente
+  para que el login no sirva de enumerador de cuentas.
+
+### D15 — Guardas de rol como funciones puras, y /admin no rebota a /login
+- Contexto: spec pide que ROOT/ADMIN entren a `/admin` y el resto a `/portal`,
+  con redirect a login si no hay sesión.
+- Decisión: todo vive en `lib/auth/guards.ts` como funciones puras sin base de
+  datos, sin cookies y sin imports de `next/*`. Eso las hace testeables de
+  forma aislada **y** permite importarlas tanto desde `middleware.ts` (Edge
+  Runtime) como desde un Server Component.
+  Dos reglas que se fijan a propósito:
+  - un `MEMBER` que pide `/admin` va a **`/portal`**, no a `/login`: está
+    autenticado, mandarlo al login le diría falsamente que su sesión caducó;
+  - `safeNextPath` rechaza `//host`, `/\host`, `https://…`, rutas relativas y
+    `CR`/`LF`. Sin eso, `/login?next=//evil.example` convertiría un login
+    exitoso en un robo de sesión vía open redirect.
+- Consecuencias: el middleware es la **primera** compuerta, no la única.
+  `lib/auth/require.ts` vuelve a comprobar en el servidor en cada página
+  protegida, para que un error en el `matcher` no sea lo único entre una
+  petición anónima y `/admin`. `toPathname()` recorta `?query` y `#fragment`
+  antes de comparar: los predicados son comparaciones exactas o de prefijo, y
+  `isAdminPath("/admin?tab=x")` sería `false` sin ese recorte, es decir, un
+  bypass silencioso si alguien pasara `request.url` en vez de `pathname`.
