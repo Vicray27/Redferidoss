@@ -16,6 +16,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:check:drift": "node scripts/check-schema-drift.mjs",
     "seed:root": "tsx prisma/seed.ts",
+    "auth:set-password": "tsx scripts/set-password.ts",
     "test": "vitest run"
   },
   "dependencies": {
