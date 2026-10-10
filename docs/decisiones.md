@@ -61,3 +61,42 @@ resuelve hacia lo más configurable (spec §18.7).
   cupo + `max_depth` (§10.5).
 - Consecuencias: F2 debe implementar la validación SERIALIZABLE de cupo
   en el registro; sin ella, el límite es best-effort a nivel app.
+
+## PR4 — seed + librería de settings
+
+### D7 — Catálogo §6 completo: 40 claves, con dos desviaciones declaradas
+- Contexto: `0001_init` crea la tabla `settings` VACÍA (el DDL no puede
+  depender de filas que sólo existen tras el seed), así que el catálogo
+  tiene que vivir en código. La spec §6 lo enumera en 5 grupos y en
+  ningún artefacto previo de SDD estaba transcrito.
+- Opciones: (a) sembrar solo las 4 claves que el SQL lee
+  (`referral.max_direct_referrals`, `referral.max_depth`,
+  `referral.count_pending_in_limit`, `payments.max_reports_per_cycle`);
+  (b) sembrar las 40 claves de §6.
+- Decisión: (b), en `lib/settings-catalog.ts`, con dos desviaciones
+  explícitas respecto del literal de §6:
+  - `referral.require_email_verification` se siembra **false**, no true.
+    Este proyecto no tiene proveedor de correo (decisión "Quitar Resend"),
+    así que un `true` sería un parámetro insatisfacible: nadie podría
+    registrarse nunca. La fila lo dice en su `description` para que F2 lo
+    revierta con un solo UPDATE cuando exista el proveedor.
+  - `general.logo_key`, `general.support_email` y `general.terms_url` se
+    siembran con `""`. §6 no les da default y `settings.value` es NOT
+    NULL, así que la cadena vacía es el centinela de "sin configurar".
+- Consecuencias: `tests/settings-catalog.test.ts` fija el catálogo contra
+  el SQL (drift seed↔migración) y cuenta 40 claves, de modo que un borrado
+  accidental falla en vez de reducir la superficie de parámetros en
+  silencio.
+
+### D8 — `is_public` y `editable_by` del catálogo
+- Contexto: §5.7 define `is_public` ("si puede leerse sin autenticación,
+  p. ej. nombre de la marca") y `editable_by` con default `ROOT` en el
+  DDL, pero §6 dice "Todas editables desde /admin/settings" y no nombra
+  qué claves son públicas.
+- Decisión: `editable_by = ADMIN` en las 40 claves (con `ROOT` también
+  autorizado, por jerarquía) — si se dejara el default `ROOT`, nadie con
+  rol ADMIN podría editar nada desde `/admin/settings`, contradiciendo
+  §6. `is_public = true` únicamente en `general.app_name`.
+- Consecuencias: el resto de la marca (logo, color) queda detrás de
+  autenticación hasta que F5/F6 lo pidan; cambiarla es un UPDATE, no una
+  migración.
