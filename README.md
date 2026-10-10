@@ -247,3 +247,21 @@ SELECT migration_name, finished_at IS NOT NULL AS ok FROM _prisma_migrations;
 | `app/api/cron/[job]/route.ts` | Contrato `POST /api/cron/{job}`; 501 hasta F7. |
 | `jobs/index.ts` | Registro de los 6 jobs de §9 (contrato, sin implementación). |
 | `prisma/migrations/0002_settings_notify/` | Trigger que emite `settings_changed`. |
+
+## Estructura de la autenticación (F2)
+
+| Archivo | Qué hace |
+|---|---|
+| `lib/users.ts` | `findByEmail` / `findByPublicCode` sobre `$queryRaw` con `::citext` (D14). |
+| `lib/auth/guards.ts` | Rol y ruta como funciones puras; `safeNextPath` anti open-redirect (D15). |
+| `lib/auth/session.ts` | Token JWT HS256 con `jose`, Edge-safe; `AUTH_SECRET` en runtime (D16, D17). |
+| `lib/auth/schema.ts` | `loginSchema` de Zod, compartido por cliente y servidor. |
+| `lib/auth/login.ts` | `authenticate()` sin framework ni DB: sin enumeración y con igualación de tiempos. |
+| `lib/auth/rate-limit.ts` | 8 fallos por 15 min sobre `rate_limits`, ventana fija, clave hasheada (D18). |
+| `lib/auth/deps.ts` | Une `authenticate()` y el throttle con las implementaciones reales. |
+| `lib/auth/actions.ts` | Server Actions `loginAction` / `logoutAction`. |
+| `lib/auth/require.ts` | La autoridad de acceso en el servidor: `requireSession` / `requireStaffSession`. |
+| `middleware.ts` | Redirige; no autoriza. Ver `lib/auth/require.ts`. |
+| `app/login/` | Formulario (react-hook-form + Zod) y su página. |
+| `app/admin/`, `app/portal/` | Zonas protegidas; identity visible, dashboard en F5. |
+| `scripts/set-password.ts` | `pnpm auth:set-password`, el único reset de contraseña posible. |
