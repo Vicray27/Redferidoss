@@ -156,3 +156,17 @@ resuelve hacia lo más configurable (spec §18.7).
 - Consecuencias: con el catálogo por defecto el seed nunca falla. Si un
   admin cambia la frecuencia antes de que exista el ancla, el error es
   explícito. La clave de ancla llega con el job `cycle:ensure` de F7.
+
+### D13 — El cron acepta `Authorization: Bearer` y `x-cron-secret`
+- Contexto: §9 dice literalmente "POST /api/cron/{job} con header
+  `x-cron-secret`". `Authorization: Bearer` es la forma canónica y la que
+  cualquier cliente (pg_cron vía HTTP, node-cron, curl) ya sabe construir.
+- Decisión: `Authorization: Bearer <CRON_SECRET>` es la forma canónica y
+  `x-cron-secret` se acepta también, por compatibilidad literal con §9. Si
+  vienen ambos, manda `Authorization`. La comparación es de tiempo constante.
+  **`CRON_SECRET` ausente responde 503, nunca "sin autenticación"**: un
+  endpoint que se abre porque falta una variable es un disparador público de
+  jobs.
+- Consecuencias: la ruta valida el secreto ANTES de resolver `{job}`, así que
+  un llamador sin credenciales no puede enumerar qué jobs existen. F7 elige
+  cuál de las dos formas usa su scheduler sin tocar la ruta.
