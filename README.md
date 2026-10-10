@@ -61,7 +61,72 @@ Además de `DATABASE_URL` y `TZ_DEFAULT`, el stack necesita:
 |---|---|
 | `ROOT_EMAIL` | Correo del usuario raíz que crea `pnpm seed:root`. |
 | `ROOT_PASSWORD` | Su contraseña. **Sólo para el seed inicial**; el seed aborta si falta. |
+| `AUTH_SECRET` | **Requerida para que exista el login.** Firma la cookie de sesión (HS256). |
 | `CRON_SECRET` | Protege `POST /api/cron/{job}`. Sin ella la ruta responde 503 (no se abre). |
+
+### `AUTH_SECRET` es obligatoria y no tiene default
+
+```sh
+openssl rand -base64 32     # genera ~44 caracteres
+```
+
+La app **se niega a firmar sesiones** si `AUTH_SECRET` falta, tiene menos de 32
+caracteres o sigue siendo el placeholder de `.env.example`
+(`AuthSecretError`, D17). Es deliberado: un default silencioso firmaría sesiones
+con una clave que está publicada en este repositorio, y cualquiera podría
+forjar un token de ROOT. Un error ruidoso es el resultado correcto.
+
+Se lee en **runtime**, no en build: Next.js inlinea los `process.env.FOO`
+estáticos al compilar, y una acceso dinámico no se inlinea, así que la misma
+imagen sirve para todos los entornos sin reconstruir.
+
+## Autenticación (F2)
+
+### Variables necesarias
+
+Sólo `AUTH_SECRET`. `DATABASE_URL` ya hacía falta para todo lo demás.
+
+### Flujo de login
+
+1. `/login` valida el formulario con `react-hook-form` + Zod
+   (`lib/auth/schema.ts`, mensajes en español).
+2. El Server Action `loginAction` **vuelve a validar en el servidor** con el
+   mismo esquema: la validación del cliente es una comodidad de UX, no un
+   límite de confianza.
+3. `lib/auth/login.ts` busca el usuario por email con `$queryRaw`
+   parametrizado y `::citext` (`users.email` es CITEXT y Prisma no lo puede
+   tipar, D14), y verifica la contraseña con Argon2id.
+4. Si las credenciales son correctas, se firma un JWT (HS256, 8 h) y se guarda
+   en la cookie `red_session`: `httpOnly`, `sameSite=lax`, `secure` en
+   producción.
+5. `middleware.ts` deja pasar `/admin` y `/portal` con sesión válida y
+   redirige a `/login` sin ella. Cada página protegida **vuelve a comprobar**
+   la sesión en el servidor (`lib/auth/require.ts`): el middleware redirige,
+   no autoriza.
+6. ROOT y ADMIN entran a `/admin`; el resto a `/portal`. Un `MEMBER` que pide
+   `/admin` cae en `/portal`, no en `/login`.
+
+### Recuperar o cambiar la contraseña del root
+
+Si se pierde la contraseña del root **no hay correo de recuperación**: el
+proyecto no tiene proveedor de correo (D7). El reset es una operación de
+consola, deliberadamente explícita:
+
+```sh
+docker run --rm -v "$PWD:/app" -w /app --network <red-del-stack> \
+  -e DATABASE_URL="postgresql://referidos:<password>@postgres:5432/referidos?schema=public" \
+  -e AUTH_USER_EMAIL="victorjoseraymond@gmail.com" \
+  -e AUTH_USER_PASSWORD='<nueva contraseña fuerte>' \
+  node:24-alpine sh -lc "corepack enable && pnpm install --no-frozen-lockfile && pnpm auth:set-password"
+```
+
+Imprime cuántos usuarios coincidieron. Aborta si la contraseña falta o si el
+correo no existe: no hay default, no hay generación automática y no hay
+contraseña en el repositorio.
+
+Las sesiones ya abiertas siguen siendo válidas hasta 8 h después del reset
+(las sesiones son JWT sin estado; ver D17). Para que el cambio surta efecto de
+inmediato, hay que cerrar sesión o reiniciar el contenedor `app`.
 
 ## Base de datos (PR2 DDL + PR3 espejo)
 
@@ -81,8 +146,10 @@ limitaciones de Prisma 6 se resuelven y documentan en el header del schema:
 
 `Unsupported` NO es consultable desde Prisma Client (queda fuera del modelo
 generado): `users.email`, `users.path`, `invitations.email_target` y
-`payment_reports.snapshot_path` requieren `$queryRaw` o una decisión de mapeo
-posterior. Antes de F2 (auth) hay que resolver el lookup por email.
+`payment_reports.snapshot_path` requieren `$queryRaw`. **F2 resolvió el lookup
+por email**: vive en `lib/users.ts` (`findByEmail`, `findByPublicCode`), siempre
+parametrizado y con cast `::citext` explícito (D14). `insertUser` en
+`lib/tree.ts` y `prisma/seed.ts` son raw por la misma razón.
 
 **Nunca uses `prisma migrate dev`**: intentaría generar DDL desde el schema y
 perdería ltree, GiST, EXCLUDE y los triggers. Solo `prisma migrate deploy`.
