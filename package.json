@@ -11,7 +11,10 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate",
+    "db:validate": "prisma validate",
     "db:migrate": "prisma migrate deploy",
+    "db:check:drift": "node scripts/check-schema-drift.mjs",
     "seed:root": "tsx prisma/seed.ts",
     "test": "vitest run"
   },

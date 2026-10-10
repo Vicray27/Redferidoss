@@ -35,6 +35,6 @@ playwright-report/
 test-results/
 .turbo/
 
-# prisma generated client (PR3+)
-# (kept commented until the client is generated)
-# generated/
+# prisma generated client
+# PR3: the client is generated into node_modules/.pnpm (default prisma-client-js
+# output), so nothing extra is ignored. A custom `output =` would go here.

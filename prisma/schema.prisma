@@ -1,0 +1,555 @@
+// =============================================================================
+// red-referidos — Prisma 6 mirror of prisma/migrations/0001_init/migration.sql
+// SDD slice PR3 (task 2.2).
+//
+// THIS FILE HAS NO DDL AUTHORITY.
+// The hand-written SQL migration is the single source of truth (design:
+// "SQL is authoritative; schema.prisma mirrors with String/Unsupported +
+// dbgenerated"). Prisma 6 cannot emit ltree columns, GiST/GIN indexes,
+// partial indexes, EXCLUDE constraints or triggers, so `prisma migrate dev`
+// must never be used here: only `prisma migrate deploy` (pnpm db:migrate),
+// which replays the SQL folder verbatim. `pnpm db:check:drift` proves this
+// file and the SQL agree on every enum, table, column, type and nullability,
+// and that every index below carries the exact name the SQL created.
+//
+// ---------------------------------------------------------------------------
+// Type mapping rules (exact, one per SQL type — enforced by the drift check)
+// ---------------------------------------------------------------------------
+//   UUID                       -> String    @db.Uuid
+//   TEXT                       -> String    @db.Text
+//   CITEXT                     -> Unsupported("citext")
+//   LTREE                      -> Unsupported("ltree")
+//   TIMESTAMPTZ                -> DateTime   @db.Timestamptz(6)
+//   DATE                       -> DateTime   @db.Date
+//   NUMERIC(14,2) / NUMERIC    -> Decimal   @db.Decimal(14, 2) / @db.Decimal
+//   JSONB                      -> Json      @db.JsonB
+//   BOOLEAN                    -> Boolean
+//   INTEGER                    -> Int
+//   BIGINT                     -> BigInt    @db.BigInt
+//   <enum type>                -> enum with the SAME lowercase type name, so
+//                                 the mirror is name-for-name identical.
+//   DEFAULT gen_random_uuid()  -> @default(dbgenerated("gen_random_uuid()"))
+//   DEFAULT now()              -> @default(dbgenerated("now()"))
+//
+// Every DB-side default is mirrored with dbgenerated() instead of Prisma's
+// now()/autoincrement shorthands so the value the database produces is the
+// same one the migration declares. Prisma never writes these DDL; the SQL
+// migration already did.
+//
+// ---------------------------------------------------------------------------
+// Indexes NOT redeclared here — Prisma 6 cannot express them, the SQL owns
+// them (verified: `where:` is rejected by `prisma validate` on both @@index
+// and @@unique, so partial indexes are not representable at all)
+// ---------------------------------------------------------------------------
+//   idx_users_path               GIST (path)                          §5
+//   idx_reports_snapshot_path    GIST (snapshot_path)                 §5
+//   idx_field_values_value       GIN  (value, jsonb)                  §5
+//   no_overlap_cycles            EXCLUDE USING GIST (tstzrange(...))  §5.4
+//   uq_users_single_root         expression UNIQUE ((1))              §5.1
+//   idx_users_sponsor            partial: WHERE deleted_at IS NULL   §5
+//   idx_users_status             partial: WHERE deleted_at IS NULL   §5
+//   idx_users_depth              partial: WHERE deleted_at IS NULL   §5
+//   idx_notifications_unread     partial: WHERE read_at IS NULL      §5.9
+//   uq_report_user_cycle         partial unique: WHERE status <>
+//                               'REJECTED' (D4, enforces R7)          §5.5
+//
+// `tstzrange` is NOT a column type anywhere in this schema: it appears only
+// inside the EXCLUDE constraint above, so no Unsupported("tstzrange") field
+// exists. GiST/GIN/EXCLUDE/partial indexes and all triggers/functions are
+// invisible to the Prisma client; queries that need them use parameterised
+// $queryRaw (design: "tree reads/writes via $queryRaw in lib/tree.ts").
+// Dropping a declared @@index here would not remove it from the database, and
+// adding one would not create it — the SQL migration is the only writer.
+//
+// ---------------------------------------------------------------------------
+// Unsupported("citext") is NOT queryable through Prisma Client (F2 impact)
+// ---------------------------------------------------------------------------
+// `users.email` and `invitations.email_target` are CITEXT columns.
+// Unsupported fields are excluded from the generated client model, so they
+// cannot appear in `where`/`create`/`select`. Consequences, deliberately
+// accepted in F1 and to be settled before F2 auth:
+//   * lookup by email cannot use `prisma.user.findUnique` -> needs
+//     $queryRaw or a follow-up mapping decision;
+//   * `prisma.user.create()` cannot supply the NOT NULL email column.
+// Do not "fix" it by switching to `String @db.Text`: that trades a real drift
+// for a real bug — Prisma would type the column as `text` and silently lose
+// the case-insensitive comparison the CITEXT column provides.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums (§5.1, §5.3–§5.5, §5.7). Lowercase type names mirror the SQL exactly.
+// -----------------------------------------------------------------------------
+
+enum user_role {
+  ROOT
+  ADMIN
+  MEMBER
+}
+
+enum user_status {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum invite_kind {
+  SINGLE
+  MULTI
+}
+
+enum cycle_status {
+  OPEN
+  GRACE
+  CLOSED
+}
+
+enum report_status {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum payment_method {
+  TRANSFER
+  MOBILE
+  ZELLE
+  CASH
+  CRYPTO
+  OTHER
+}
+
+enum setting_type {
+  INT
+  DECIMAL
+  BOOL
+  STRING
+  ENUM
+  JSON
+}
+
+// -----------------------------------------------------------------------------
+// users (§5.1) — sponsor_id is the canonical parent pointer. path/depth are
+// trigger-maintained: never write them, the guard trigger rejects the attempt
+// (D3). Rewrite the tree only through fn_user_move().
+// -----------------------------------------------------------------------------
+
+model User {
+  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicCode           String       @map("public_code") @db.Text
+  sponsorId            String?      @map("sponsor_id") @db.Uuid
+  /// Materialised ltree path. Root = 'root'; child = parent || fn_ltree_label(public_code).
+  path                 Unsupported("ltree")
+  depth                Int          @default(0)
+  role                 user_role    @default(MEMBER)
+  /// CITEXT: case-insensitive uniqueness (uq_users_email) is enforced in SQL.
+  email                Unsupported("citext")
+  emailVerifiedAt      DateTime?    @map("email_verified_at") @db.Timestamptz(6)
+  passwordHash         String       @map("password_hash") @db.Text
+  fullName             String       @map("full_name") @db.Text
+  /// D5: plain UNIQUE when present (NULLs never conflict in Postgres).
+  nationalId           String?      @map("national_id") @db.Text
+  phone                String?      @db.Text
+  birthDate            DateTime?    @map("birth_date") @db.Date
+  country              String?      @db.Text
+  state                String?      @db.Text
+  city                 String?      @db.Text
+  address              String?      @db.Text
+  avatarKey            String?      @map("avatar_key") @db.Text
+  status               user_status  @default(ACTIVE)
+  maxReferralsOverride Int?         @map("max_referrals_override")
+  timezone             String?      @db.Text
+  lastLoginAt          DateTime?    @map("last_login_at") @db.Timestamptz(6)
+  createdAt            DateTime     @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime     @default(dbgenerated("now()")) @map("updated_at") @db.Timestamptz(6)
+  deletedAt            DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  sponsor              User?             @relation("UserTree", fields: [sponsorId], references: [id], onDelete: Restrict)
+  referrals            User[]            @relation("UserTree")
+  closuresAsAncestor   UserClosure[]     @relation("ClosureAncestor")
+  closuresAsDescendant UserClosure[]     @relation("ClosureDescendant")
+  sentInvitations      Invitation[]      @relation("InvitationInviter")
+  paymentReports       PaymentReport[]   @relation("ReportUser")
+  reviewedReports      PaymentReport[]   @relation("ReportReviewer")
+  settingsUpdated      Setting[]         @relation("SettingUpdater")
+  auditLogs            AuditLog[]        @relation("AuditActor")
+  notifications        Notification[]
+  sessions             Session[]
+  passwordResets       PasswordReset[]
+  ownedFiles           StoredFile[]      @relation("FileOwner")
+  cycleObligations     CycleObligation[]
+
+  @@unique([email], map: "uq_users_email")
+  @@unique([publicCode], map: "uq_users_public_code")
+  @@unique([nationalId], map: "uq_users_national_id")
+  @@map("users")
+}
+
+// -----------------------------------------------------------------------------
+// user_closure (§5.2) — ancestor/descendant pairs, depth 0 = self. Rows are
+// written by fn_user_closure_insert() (AFTER INSERT) and fn_user_move() only.
+// -----------------------------------------------------------------------------
+
+model UserClosure {
+  ancestorId   String @map("ancestor_id") @db.Uuid
+  descendantId String @map("descendant_id") @db.Uuid
+  /// Graph distance in tree edges; 0 is the self-row.
+  depth        Int
+
+  ancestor   User @relation("ClosureAncestor", fields: [ancestorId], references: [id], onDelete: Cascade)
+  descendant User @relation("ClosureDescendant", fields: [descendantId], references: [id], onDelete: Cascade)
+
+  @@id([ancestorId, descendantId], map: "pk_user_closure")
+  @@index([descendantId, depth], map: "idx_closure_descendant")
+  @@index([ancestorId, depth], map: "idx_closure_ancestor")
+  @@map("user_closure")
+}
+
+// -----------------------------------------------------------------------------
+// invitations (§5.3) — only the SHA-256 hash of the token is stored.
+// -----------------------------------------------------------------------------
+
+model Invitation {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inviterId   String      @map("inviter_id") @db.Uuid
+  tokenHash   String      @map("token_hash") @db.Text
+  kind        invite_kind @default(MULTI)
+  /// CITEXT optional target (Unsupported: not client-queryable, see header).
+  emailTarget Unsupported("citext")? @map("email_target")
+  maxUses     Int         @default(1) @map("max_uses")
+  uses        Int         @default(0)
+  expiresAt   DateTime?   @map("expires_at") @db.Timestamptz(6)
+  revokedAt   DateTime?   @map("revoked_at") @db.Timestamptz(6)
+  createdAt   DateTime    @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+
+  inviter User @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Restrict)
+
+  @@unique([tokenHash], map: "uq_invitations_token_hash")
+  @@index([inviterId], map: "idx_invitations_inviter")
+  @@map("invitations")
+}
+
+// -----------------------------------------------------------------------------
+// payment_cycles (§5.4) — `no_overlap_cycles` (EXCLUDE on
+// tstzrange(starts_at, ends_at)) is SQL-only; Prisma cannot express it.
+// -----------------------------------------------------------------------------
+
+model PaymentCycle {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  periodKey String       @map("period_key") @db.Text
+  startsAt  DateTime     @map("starts_at") @db.Timestamptz(6)
+  endsAt    DateTime     @map("ends_at") @db.Timestamptz(6)
+  dueAt     DateTime     @map("due_at") @db.Timestamptz(6)
+  status    cycle_status @default(OPEN)
+  createdAt DateTime     @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+
+  paymentReports PaymentReport[]
+  obligations    CycleObligation[]
+
+  @@unique([periodKey], map: "uq_cycles_period_key")
+  @@index([status], map: "idx_cycles_status")
+  @@map("payment_cycles")
+}
+
+// -----------------------------------------------------------------------------
+// payment_methods (§5.6) — admin-configurable catalog.
+// -----------------------------------------------------------------------------
+
+model PaymentMethod {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code               String  @map("code") @db.Text
+  label              String  @map("label") @db.Text
+  instructions       String? @map("instructions") @db.Text
+  requiresReference Boolean @default(true) @map("requires_reference")
+  requiresProof      Boolean @default(false) @map("requires_proof")
+  isActive           Boolean @default(true) @map("is_active")
+  sortOrder          Int     @default(0) @map("sort_order")
+
+  reports PaymentReport[] @relation("ReportMethod")
+
+  @@unique([code], map: "uq_payment_methods_code")
+  @@map("payment_methods")
+}
+
+// -----------------------------------------------------------------------------
+// payment_reports (§5.5) — amounts are NUMERIC(14,2), never float (R8).
+// `snapshot_path` keeps its GiST index in SQL only, and the partial unique
+// uq_report_user_cycle (D4) is SQL-only too: Prisma 6 rejects `where:`.
+// -----------------------------------------------------------------------------
+
+model PaymentReport {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String          @map("user_id") @db.Uuid
+  cycleId           String          @map("cycle_id") @db.Uuid
+  amount            Decimal         @db.Decimal(14, 2)
+  currency          String          @map("currency") @db.Text
+  method            payment_method
+  methodId          String?         @map("method_id") @db.Uuid
+  reference         String?         @map("reference") @db.Text
+  paidAt            DateTime        @map("paid_at") @db.Timestamptz(6)
+  reportedAt        DateTime        @default(dbgenerated("now()")) @map("reported_at") @db.Timestamptz(6)
+  note              String?         @map("note") @db.Text
+  proofKey          String?         @map("proof_key") @db.Text
+  status            report_status   @default(PENDING)
+  reviewedBy        String?         @map("reviewed_by") @db.Uuid
+  reviewedAt        DateTime?       @map("reviewed_at") @db.Timestamptz(6)
+  reviewNote        String?         @map("review_note") @db.Text
+  snapshotDepth     Int             @map("snapshot_depth")
+  /// Denormalised ltree copy of the reporter's path at submission time.
+  snapshotPath      Unsupported("ltree") @map("snapshot_path")
+  createdAt         DateTime        @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime        @default(dbgenerated("now()")) @map("updated_at") @db.Timestamptz(6)
+
+  user                 User              @relation("ReportUser", fields: [userId], references: [id], onDelete: Restrict)
+  cycle                PaymentCycle      @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  methodCatalog        PaymentMethod?    @relation("ReportMethod", fields: [methodId], references: [id], onDelete: Restrict)
+  reviewer             User?             @relation("ReportReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
+  fulfilledObligations CycleObligation[] @relation("ObligationFulfilledReport")
+
+  @@index([cycleId, userId], map: "idx_reports_cycle_user")
+  @@index([userId, paidAt(sort: Desc)], map: "idx_reports_user_paid")
+  @@index([status], map: "idx_reports_status")
+  @@index([reportedAt(sort: Desc)], map: "idx_reports_reported")
+  @@index([methodId], map: "idx_reports_method")
+  @@map("payment_reports")
+}
+
+// -----------------------------------------------------------------------------
+// settings (§5.7/§6) — business parameters. Code NEVER hardcodes them;
+// lib/settings.ts (PR4) throws on a missing key instead of defaulting.
+// -----------------------------------------------------------------------------
+
+model Setting {
+  key         String       @id @map("key") @db.Text
+  value       Json         @map("value") @db.JsonB
+  type        setting_type @map("type")
+  groupName   String       @map("group_name") @db.Text
+  label       String       @map("label") @db.Text
+  description String?      @map("description") @db.Text
+  minValue    Decimal?     @map("min_value") @db.Decimal
+  maxValue    Decimal?     @map("max_value") @db.Decimal
+  options     Json?        @map("options") @db.JsonB
+  isPublic    Boolean      @default(false) @map("is_public")
+  editableBy  user_role    @default(ROOT) @map("editable_by")
+  updatedBy   String?      @map("updated_by") @db.Uuid
+  updatedAt   DateTime     @default(dbgenerated("now()")) @map("updated_at") @db.Timestamptz(6)
+
+  updatedByUser User? @relation("SettingUpdater", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("settings")
+}
+
+// -----------------------------------------------------------------------------
+// custom_fields (§5.8) — admin-defined schema. The column is named `type` in
+// SQL; the field is `fieldType` because `type` is a Prisma schema keyword.
+// The CHECK-constrained `entity`/`field_type` vocabularies live in SQL only.
+// -----------------------------------------------------------------------------
+
+model CustomField {
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entity             String     @map("entity") @db.Text
+  code               String     @map("code") @db.Text
+  label              String     @map("label") @db.Text
+  fieldType          String     @map("type") @db.Text
+  options            Json?      @map("options") @db.JsonB
+  isRequired         Boolean    @default(false) @map("is_required")
+  isUnique           Boolean    @default(false) @map("is_unique")
+  showInRegistration Boolean    @default(false) @map("show_in_registration")
+  showInProfile      Boolean    @default(false) @map("show_in_profile")
+  showInDashboard    Boolean    @default(false) @map("show_in_dashboard")
+  visibleTo          user_role? @map("visible_to")
+  regex              String?    @map("regex") @db.Text
+  minNumeric         Decimal?   @map("min_numeric") @db.Decimal
+  maxNumeric         Decimal?   @map("max_numeric") @db.Decimal
+  defaultValue       Json?      @map("default_value") @db.JsonB
+  sortOrder          Int        @default(0) @map("sort_order")
+  isActive           Boolean    @default(true) @map("is_active")
+  createdAt          DateTime   @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime   @default(dbgenerated("now()")) @map("updated_at") @db.Timestamptz(6)
+
+  values CustomFieldValue[]
+
+  @@unique([entity, code], map: "uq_custom_fields_entity_code")
+  @@map("custom_fields")
+}
+
+// -----------------------------------------------------------------------------
+// custom_field_values (§5.8) — `entity_id` is polymorphic (no FK by design).
+// The GIN index on `value` is SQL-only.
+// -----------------------------------------------------------------------------
+
+model CustomFieldValue {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fieldId   String   @map("field_id") @db.Uuid
+  entityId  String   @map("entity_id") @db.Uuid
+  value     Json     @map("value") @db.JsonB
+  createdAt DateTime @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(dbgenerated("now()")) @map("updated_at") @db.Timestamptz(6)
+
+  field CustomField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldId, entityId], map: "uq_field_values_field_entity")
+  @@map("custom_field_values")
+}
+
+// -----------------------------------------------------------------------------
+// audit_log (§5.9, R10) — every relevant write leaves a trace; never stores
+// passwords or tokens.
+// -----------------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  action    String   @map("action") @db.Text
+  entity    String   @map("entity") @db.Text
+  entityId  String   @map("entity_id") @db.Text
+  before    Json?    @map("before") @db.JsonB
+  after     Json?    @map("after") @db.JsonB
+  ip        String?  @map("ip") @db.Text
+  userAgent String?  @map("user_agent") @db.Text
+  createdAt DateTime @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId], map: "idx_audit_entity")
+  @@index([actorId], map: "idx_audit_actor")
+  @@index([createdAt(sort: Desc)], map: "idx_audit_created")
+  @@map("audit_log")
+}
+
+// -----------------------------------------------------------------------------
+// notifications (§5.9) — idx_notifications_unread is partial, hence SQL-only.
+// -----------------------------------------------------------------------------
+
+model Notification {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  type      String    @map("type") @db.Text
+  title     String    @map("title") @db.Text
+  body      String?   @map("body") @db.Text
+  data      Json?     @default("{}") @map("data") @db.JsonB
+  readAt    DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_notifications_user")
+  @@map("notifications")
+}
+
+// -----------------------------------------------------------------------------
+// sessions (§5.9, Auth.js-standard).
+// -----------------------------------------------------------------------------
+
+model Session {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionToken String   @map("session_token") @db.Text
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime @map("expires") @db.Timestamptz(6)
+  createdAt    DateTime @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionToken], map: "uq_sessions_token")
+  @@index([userId], map: "idx_sessions_user")
+  @@index([expires], map: "idx_sessions_expires")
+  @@map("sessions")
+}
+
+// -----------------------------------------------------------------------------
+// verification_tokens (§5.9, Auth.js-standard composite PK).
+// -----------------------------------------------------------------------------
+
+model VerificationToken {
+  identifier String   @map("identifier") @db.Text
+  token      String   @map("token") @db.Text
+  expires    DateTime @map("expires") @db.Timestamptz(6)
+
+  @@id([identifier, token], map: "pk_verification_tokens")
+  @@map("verification_tokens")
+}
+
+// -----------------------------------------------------------------------------
+// password_resets (§5.9) — only the hash of the token is stored.
+// -----------------------------------------------------------------------------
+
+model PasswordReset {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @map("token_hash") @db.Text
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenHash], map: "uq_password_resets_token")
+  @@index([userId], map: "idx_password_resets_user")
+  @@map("password_resets")
+}
+
+// -----------------------------------------------------------------------------
+// files (§5.9) — MinIO object keys. The model is `StoredFile`, not `File`, so
+// the client export cannot collide with the DOM `File` type under lib: ["dom"].
+// -----------------------------------------------------------------------------
+
+model StoredFile {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key       String   @map("key") @db.Text
+  ownerId   String?  @map("owner_id") @db.Uuid
+  mime      String   @map("mime") @db.Text
+  sizeBytes BigInt   @map("size_bytes") @db.BigInt
+  checksum  String?  @map("checksum") @db.Text
+  createdAt DateTime @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+
+  owner User? @relation("FileOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@unique([key], map: "uq_files_key")
+  @@index([ownerId], map: "idx_files_owner")
+  @@map("files")
+}
+
+// -----------------------------------------------------------------------------
+// cycle_obligations (§9) — materialised "who owes this cycle", built by jobs.
+// `status` is TEXT with a CHECK vocabulary in SQL, so it stays TEXT here.
+// -----------------------------------------------------------------------------
+
+model CycleObligation {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cycleId           String         @map("cycle_id") @db.Uuid
+  userId            String         @map("user_id") @db.Uuid
+  status            String         @default("PENDING") @map("status") @db.Text
+  expectedAmount    Decimal        @map("expected_amount") @db.Decimal(14, 2)
+  fulfilledReportId String?        @map("fulfilled_report_id") @db.Uuid
+  createdAt         DateTime       @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+
+  cycle           PaymentCycle   @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fulfilledReport PaymentReport? @relation("ObligationFulfilledReport", fields: [fulfilledReportId], references: [id], onDelete: SetNull)
+
+  @@unique([cycleId, userId], map: "uq_obligations_cycle_user")
+  @@index([userId], map: "idx_obligations_user")
+  @@index([cycleId, status], map: "idx_obligations_cycle_status")
+  @@map("cycle_obligations")
+}
+
+// -----------------------------------------------------------------------------
+// rate_limits (§5.9) — fixed-window counter keyed by (key, window_start).
+// -----------------------------------------------------------------------------
+
+model RateLimit {
+  key         String   @map("key") @db.Text
+  windowStart DateTime @map("window_start") @db.Timestamptz(6)
+  count       Int      @default(1) @map("count")
+
+  @@id([key, windowStart], map: "pk_rate_limits")
+  @@map("rate_limits")
+}
