@@ -13,12 +13,16 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
 
+  # PR2 decision (D1, see docs/decisiones.md): stock postgres:16 ships the
+  # contrib modules 0001_init needs (ltree, pgcrypto, citext). pg_cron is NOT
+  # in the stock image; the pg_cron-capable image choice is deferred to F7
+  # (jobs) — design fallback is node-cron behind POST /api/cron/{job}.
   postgres:
     image: postgres:16
     restart: unless-stopped
