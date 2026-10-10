@@ -20,8 +20,9 @@
 import { cookies } from "next/headers";
 
 import { landingPathForRole, safeNextPath } from "./guards";
-import { loginDeps } from "./deps";
+import { loginDeps, loginRateLimiter } from "./deps";
 import { authenticate, AUTH_UNAVAILABLE_MESSAGE } from "./login";
+import { LOGIN_MAX_FAILURES, RATE_LIMITED_MESSAGE } from "./rate-limit";
 import { firstIssuesByField, loginSchema } from "./schema";
 import { AuthSecretError, SESSION_COOKIE, SESSION_COOKIE_OPTIONS } from "./session";
 
@@ -44,12 +45,27 @@ export async function loginAction(
     return { ok: false, fieldErrors: firstIssuesByField(parsed.error) };
   }
 
+  const email = parsed.data.email;
+
   try {
-    const outcome = await authenticate(parsed.data.email, parsed.data.password, loginDeps);
+    // Throttle BEFORE spending argon2 time, so a brute-force run is cheap to
+    // reject rather than expensive to serve.
+    if (await loginRateLimiter.current(email) >= LOGIN_MAX_FAILURES) {
+      return { ok: false, message: RATE_LIMITED_MESSAGE };
+    }
+
+    const outcome = await authenticate(email, parsed.data.password, loginDeps);
 
     if (!outcome.ok) {
+      // Only failures are counted. Counting every request would let anyone
+      // lock a known user out with a handful of junk POSTs.
+      await loginRateLimiter.recordFailure(email);
       return { ok: false, message: outcome.message };
     }
+
+    // A success clears the counter, so a user who mistyped a few times is not
+    // left one error away from being locked out.
+    await loginRateLimiter.reset(email);
 
     // Where to send the user: the page they originally asked for when that is
     // safe, otherwise their role's landing. `safeNextPath` is what stops

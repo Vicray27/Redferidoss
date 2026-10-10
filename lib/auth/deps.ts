@@ -7,10 +7,12 @@
 // and the signer, which makes the boundary easy to audit.
 // =============================================================================
 
+import { prisma } from "../db";
 import { burnVerificationTime, verifyPassword } from "../password";
 import { users } from "../users";
 
 import type { LoginDeps } from "./login";
+import { createLoginRateLimiter } from "./rate-limit";
 import { signSessionToken } from "./session";
 
 /** The real credential-check dependencies. */
@@ -20,3 +22,6 @@ export const loginDeps: LoginDeps = {
   burn: burnVerificationTime,
   issueToken: (payload) => signSessionToken(payload),
 };
+
+/** The real failed-attempt throttle, over the `rate_limits` table from §5.9. */
+export const loginRateLimiter = createLoginRateLimiter(prisma);

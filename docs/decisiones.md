@@ -289,3 +289,37 @@ resuelve hacia lo más configurable (spec §18.7).
   si falta, es corto o es el placeholder de `.env.example`: una sesión firmada
   con una clave pública del repositorio sería un root falso para cualquiera, y
   un default silencioso es el peor resultado posible.
+
+### D18 — Throttle por fallos en login, con ventana fija y clave hasheada
+- Contexto: `/login` es el único endpoint que acepta una contraseña. Sin
+  límite de intentos, los hashes Argon2id quedan expuestos a un intento de
+  adivinanza por fuerza bruta. La tabla `rate_limits` de §5.9 (PK compuesta
+  `(key, window_start)`) ya existía en `0001_init` exactamente para esto.
+- Decisión: 8 **fallos** por ventana de 15 minutos, en
+  `lib/auth/rate-limit.ts`, comprobado **antes** de gastar tiempo de Argon2.
+- Tres decisiones que no son obvias:
+  - **Se cuentan los fallos, no los intentos.** Contar cada request permitiría
+    que cualquiera bloqueara a un usuario conocido con unos pocos POST
+    basura: un DoS contra una dirección que el atacante ya conoce. Contar
+    fallos limita el ataque real. Quien se equivoca tres veces no llega al
+    límite, y un login exitoso limpia el contador.
+  - **La clave es `login:` + SHA-256(normalizado).** La tabla `rate_limits`
+    no tiene semántica de propietario ni se muestra en ninguna pantalla:
+    guardar ahí el correo en claro sería recolectar PII sin ningún beneficio.
+  - **Ventana fija, no deslizante.** La PK compuesta `(key, window_start)`
+    *es* una ventana fija por construcción; una deslizante exigiría otra forma
+    de tabla y una migración nueva. El costo es que un atacante persistente
+    puede repartir dos ráfagas sobre una frontera, aceptable con este límite.
+- Consecuencias: el mensaje de límite (`RATE_LIMITED_MESSAGE`) no menciona ni
+  correo ni contraseña, por la misma razón que `INVALID_CREDENTIALS_MESSAGE` no
+  distingue "usuario inexistente" de "contraseña incorrecta": el throttle no
+  puede convertirse en un oráculo de enumeración. El `DELETE` del `reset` sólo
+  toca la ventana actual; las filas viejas se limpian en el job de F7.
+- **Límite conocido y declarado:** es un throttle **por dirección de correo**,
+  no por IP, así que un atacante puede repartir los intentos entre cuentas y,
+  sobre todo, no frena un ataque contra **una sola cuenta** desde IP
+  cambiantes. El límite por IP requiere leer `x-forwarded-for` detrás de un proxy
+  y es trivial de evadir; el modelo de amenaza real de esta fase es la
+  adivinanza de una credencial, que este diseño frena. Un límite combinado
+  (cuenta + IP) es el siguiente paso natural si F5 expone un endpoint público
+  de registro.
