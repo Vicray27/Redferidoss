@@ -100,3 +100,35 @@ resuelve hacia lo más configurable (spec §18.7).
 - Consecuencias: el resto de la marca (logo, color) queda detrás de
   autenticación hasta que F5/F6 lo pidan; cambiarla es un UPDATE, no una
   migración.
+
+### D9 — `getSetting` devuelve null, `getSettingOrThrow` lanza
+- Contexto: §6 pide "getSetting<T>(key), caché 60 s, NOTIFY" y el criterio
+  "clave ausente = error explícito, sin default silencioso". El design
+  (#216) propone las dos funciones.
+- Decisión: `getSetting<T>(key): Promise<T | null>` devuelve `null` para una
+  clave ausente y `getSettingOrThrow<T>(key): Promise<T>` lanza
+  `SettingsMissingError` nombrando la clave. Las dos son explícitas: el
+  tipo de `getSetting` obliga al llamador a decidir, y `getSettingOrThrow`
+  es la que se usa para todo parámetro del que el código depende.
+  **Sólo se cachean valores presentes**: una clave negativa no se cachea,
+  para que `/admin/settings` la vea en la lectura siguiente y no después
+  del TTL.
+- Consecuencias: `lib/settings.ts` se construye con `createSettingsReader(
+  loader)`, así que los 12 tests de caché/TTL/invalidación corren sin
+  base de datos. La invalidación real llega por `pg` LISTEN sobre el canal
+  `settings_changed`, emitido por el trigger de
+  `prisma/migrations/0002_settings_notify` — una migración **aditiva**, no
+  una edición de `0001_init`, porque `migrate deploy` guarda el checksum de
+  cada migración aplicada y editar una ya aplicada rompe la base.
+
+### D10 — Argon2id con `@node-rs/argon2`, no con `argon2`
+- Contexto: el stack fijó Argon2id para Auth.js Credentials. La imagen de
+  producción es `node:24-alpine`.
+- Decisión: `@node-rs/argon2` (binarios N-API precompilados, incluido
+  `@node-rs/argon2-linux-x64-musl`) en lugar de `argon2`, que exige
+  node-gyp y un toolchain de compilación en alpine.
+- Consecuencias: los parámetros (m=19456, t=2, p=1) viajan en el string
+  PHC guardado, así que subirlos más adelante no invalida los hashes
+  existentes. La contraseña del root sale SIEMPRE de `ROOT_PASSWORD`: el
+  seed aborta si no está, porque una clave por defecto o generada en el
+  repositorio sería una puerta trasera permanente.
