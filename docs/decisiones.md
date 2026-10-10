@@ -223,3 +223,69 @@ resuelve hacia lo más configurable (spec §18.7).
   antes de comparar: los predicados son comparaciones exactas o de prefijo, y
   `isAdminPath("/admin?tab=x")` sería `false` sin ese recorte, es decir, un
   bypass silencioso si alguien pasara `request.url` en vez de `pathname`.
+
+### D16 — Sesión propia con `jose` (HS256) en vez de Auth.js v5
+- Contexto: el stack nombra "Auth.js Credentials + Argon2id" (comentario de
+  `lib/password.ts`), y F2 necesita credenciales + JWT httpOnly + guardas por
+  rol en App Router.
+- Evidencia (verificada contra el registro npm, no de memoria):
+  - `next-auth` **`latest` = 4.24.15**; la v5 sigue en **`beta`** →
+    `5.0.0-beta.32`. Es decir, v5 NO es estable: hace más de tres años que
+    está en beta y `npm i next-auth` instala la v4, que no es la que el stack
+    describe.
+  - El despliegue es un stack de Portainer que reconstruye desde git cada 5
+    minutos. Una dependencia en beta convierte cada bump transitivo en un
+    riesgo operativo sobre el único activo que importa: poder entrar al
+    sistema.
+- Opciones: (a) `next-auth@5` beta con Credentials + JWT; (b) `next-auth@4`
+  estable; (c) token JWT propio sobre `jose`.
+- Decisión: **(c)**. El alcance real de esta fase es un solo método de
+  autenticación (correo + contraseña), sin OAuth, sin proveedor de correo
+  (D7), sin verificación de email y sin recuperación por email. Todo lo que
+  Auth.js aporta por encima de eso —adaptadores de proveedores, base de datos
+  de sesiones, callbacks, tipos de `Session`/`User`, capas de augmented types—
+  es superficie que este proyecto no usa. A cambio, `lib/auth/session.ts` son
+  ~180 líneas sin dependencia en beta, auditables de una sentada.
+  Lo que SÍ se conserva de Auth.js: cookie httpOnly, `sameSite=lax`, JWT
+  firmado, expiración, y una capa server-side que revalida en cada página
+  protegida (`lib/auth/require.ts`).
+- Consecuencias: se fija `algorithms: ["HS256"]` en la verificación (un token
+  `alg: none` debe rechazarse) y se validan emisor y audiencia, para que un
+  token emitido por otro servicio que comparta el secreto no sea aceptado. El
+  payload se re-valida con Zod después de verificar la firma: la firma prueba
+  que lo escribimos nosotros, no que el payload conserve la forma tras un
+  cambio de esquema.
+  **Costo asumido:** no hay `next-auth`, así que tampoco hay `signOut` de
+  fábrica ni flujo de contraseña olvidada. El logout es un Server Action propio
+  (`lib/auth/actions.ts`) y el reset se hace por consola con
+  `pnpm auth:set-password` (README), que es la vía correcta cuando no hay
+  correo saliente. Reevaluar si aparece un segundo proveedor (Google, Microsoft)
+  o si el proyecto adopta la v5 estable.
+
+### D17 — Sesión sin estado: la suspensión tarda hasta 8 h en aplicarse
+- Contexto: un JWT no se puede revocar sin consultarlo. `users.status` puede
+  pasar a `SUSPENDED` (o `deleted_at` a `now()`) mientras la sesión sigue viva.
+- Decisión: JWT stateless con vida de **8 h**, cookie
+  `httpOnly` + `sameSite=lax` + `secure` en producción. Un JWT robado tiene
+  una vida acotada y conocida, que es la razón por la que la vida corta es
+  obligatoria y no un detalle. El login **sí** respeta el estado
+  (`SUSPENDED` se rechaza), y siempre después de verificar la contraseña, para
+  que el mensaje específico no sirva de sonda de enumeración.
+- Consecuencias y límite explícito: **suspender o borrar un usuario no invalida
+  sus sesiones abiertas hasta que pasan 8 h como máximo.** Mitigaciones
+  aceptables cuando haga falta:
+  1. bajar `SESSION_TTL_SECONDS` (impacto directo en la experiencia de uso);
+  2. denylist de `session_version` por usuario, verificada en
+     `lib/auth/require.ts` (cuesta una lectura por página protegida);
+  3. sesiones en base de datos, lo que deshace la statelessness.
+  Ninguna se implementa ahora porque el modelo de amenazas de esta fase es el
+  login, no la revocación inmediata. F5 es el corte natural para la opción 2.
+- Nota de seguridad: `AUTH_SECRET` se lee en **runtime** y por clave
+  dinámica. Next.js inlinea los `process.env.FOO` estáticamente analizables en
+  tiempo de build, lo que ataría el secreto a la imagen Docker y obligaría a
+  existirlo durante `docker build`; la documentación del framework indica que
+  un acceso dinámico **no** se inlinea, que es justo lo que se necesita para
+  promover una sola imagen entre entornos. Además `readAuthSecret()` **lanza**
+  si falta, es corto o es el placeholder de `.env.example`: una sesión firmada
+  con una clave pública del repositorio sería un root falso para cualquiera, y
+  un default silencioso es el peor resultado posible.
