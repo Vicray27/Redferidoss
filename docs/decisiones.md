@@ -132,3 +132,27 @@ resuelve hacia lo más configurable (spec §18.7).
   existentes. La contraseña del root sale SIEMPRE de `ROOT_PASSWORD`: el
   seed aborta si no está, porque una clave por defecto o generada en el
   repositorio sería una puerta trasera permanente.
+
+### D11 — `public_code` del root derivado del correo
+- Contexto: §5.1 pide un código corto legible de 8 caracteres en base32 sin
+  ambigüedad, usado en `/r/{public_code}`. Un valor aleatorio haría el seed
+  no reproducible; uno fijo y adivisible (`ROOT`) publica la URL de la raíz.
+- Decisión: `derivePublicCode(email)` = SHA-256 del correo normalizado
+  mapeado al alfabeto Crockford (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`, sin
+  I/L/O/U), primeros 8 caracteres.
+- Consecuencias: estable entre entornos y re-ejecuciones, con la forma que
+  §5.1 pide y sin que el código dependa del nombre del rol.
+
+### D12 — Sólo `WEEKLY` es calculable: §6 no define el ancla de BIWEEKLY/MONTHLY
+- Contexto: `payments.frequency` admite WEEKLY, BIWEEKLY y MONTHLY, pero el
+  pseudocódigo de §9.1 ancla BIWEEKLY/MONTHLY a `payments.epoch_date`, y
+  **no existe ninguna clave `epoch` en el catálogo §6**. Sin ancla no hay
+  forma correcta de calcular la ventana.
+- Decisión: `lib/cycles.ts` implementa WEEKLY y lanza
+  `UnsupportedCycleFrequencyError` para las otras dos, con un mensaje que
+  nombra la clave que falta. No se inventa un ancla: adivinar produciría
+  ventanas desplazadas y ciclo solapado, que el EXCLUDE de §5.4
+  rechazaría con un error incomprensible.
+- Consecuencias: con el catálogo por defecto el seed nunca falla. Si un
+  admin cambia la frecuencia antes de que exista el ancla, el error es
+  explícito. La clave de ancla llega con el job `cycle:ensure` de F7.
