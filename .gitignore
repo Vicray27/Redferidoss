@@ -20,6 +20,15 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
+# local tooling caches (SDD artifact store = engram, no files)
+.atl/
+
+# binaries / installers (never part of the app)
+*.exe
+*.msi
+*.dmg
+*.zip
+
 # test / coverage artifacts (generated, PR4+)
 coverage/
 playwright-report/
