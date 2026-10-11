@@ -2,7 +2,7 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
 RUN npm install -g pnpm@12
-COPY package.json pnpm-workspace.yaml* ./
+COPY package.json pnpm-workspace.yaml* .npmrc ./
 # PR3: @prisma/client's postinstall runs `prisma generate`, which validates the
 # datasource and aborts with P1012 "Environment variable not found:
 # DATABASE_URL" even though it never opens a connection. .env is excluded by
@@ -20,7 +20,11 @@ ARG DATABASE_URL=postgresql://build:build@localhost:5432/build
 ENV DATABASE_URL=$DATABASE_URL
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN mkdir -p ./public && pnpm build
+# prisma generate must run here, not only at pnpm install time: the deps stage
+# copies package.json alone (no prisma/schema.prisma), so @prisma/client is an
+# ungenerated stub there. lib/db.ts imports PrismaClient, so `next build` type
+# checking fails without this.
+RUN mkdir -p ./public && pnpm db:generate && pnpm build
 
 # ---- runner: minimal production image ----
 FROM node:24-alpine AS runner
