@@ -105,3 +105,20 @@ export function assertSameOrigin(request: Request): void {
     throw new ForbiddenError("cross-origin request refused");
   }
 }
+
+/**
+ * Best-effort client address for throttling.
+ *
+ * Behind the deployment's reverse proxy the socket address is the proxy, so
+ * `x-forwarded-for` (first hop) is the only usable signal. It is spoofable by
+ * direct clients — acceptable here because the throttle's job is to blunt
+ * scripted abuse, not to be an authentication factor.
+ */
+export function clientIp(request: Request): string | null {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) {
+    const first = forwarded.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  return request.headers.get("x-real-ip");
+}
