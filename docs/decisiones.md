@@ -543,3 +543,22 @@ resuelve hacia lo más configurable (spec §18.7).
   los links `/r/CODIGO` de terceros; "Tamaño de mi red" para un miembro pasa
   a significar sus referidos directos. El ajuste §6 queda conservado e
   inerte mientras el techo de F4 esté en 1.
+
+### D41 - Idempotencia de los jobs de ciclos por construcción (sin advisory lock)
+- Contexto: §9 pide jobs idempotentes y nombra `pg_try_advisory_lock`. Un
+  advisory lock de sesión con Prisma exige fijar una conexión (una
+  `$transaction` interactiva) que el pool sólo garantiza dentro del callback,
+  y para estos dos jobs no aporta corrección: sus INSERT ya son seguros.
+- Decisión: `cycle:ensure` inserta una ventana sólo si su período no existe y
+  ninguna ventana existente se superpone (guard `NOT EXISTS` + `ON CONFLICT
+  (period_key) DO NOTHING`), y trata la violación de la restricción de
+  exclusión (`23P01`) como "perdió la carrera", no como error.
+  `cycle:obligations` inserta con `ON CONFLICT (cycle_id, user_id) DO NOTHING`.
+  Correr cualquiera de los dos dos veces es un no-op; el lock queda diferido a
+  los jobs multi-statement de F7 (cycle:close, cycle:reminders), donde una
+  sección crítica sí importa.
+- Consecuencias: los jobs pueden dispararse por horario sin coordinación entre
+  instancias; cada corrida responde su resumen (planned/created/skipped/raced)
+  en el envelope §10 de `/api/cron/{job}`. `expected_amount` cruza a
+  NUMERIC(14,2) siempre por el lado DECIMAL de lib/money.ts
+  (`formatAmount(parseAmount(...))`), nunca como float (A14).

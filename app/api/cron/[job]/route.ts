@@ -1,21 +1,28 @@
 // =============================================================================
 // POST /api/cron/{job} — scheduled-job entry point (§9).
 //
-// Contract, and nothing beyond it in F1:
+// Contract:
 //   1. the shared secret is checked FIRST, so an unauthenticated caller cannot
 //      even enumerate which jobs exist;
 //   2. an unset CRON_SECRET is a 503, never an open door — an endpoint that
 //      fails open because a variable is missing is a public job trigger;
-//   3. a registered but unimplemented job answers 501, which is the honest
-//      answer: pg_cron scheduling and the job bodies land in F7 (D1).
+//   3. a registered job with `implemented: true` runs and answers its summary
+//      in the §10 envelope; a registered but unimplemented one answers 501,
+//      which is the honest answer until F7 ships its body (D1).
 //
-// Real jobs will run under `pg_try_advisory_lock` (§9 idempotency) regardless
-// of whether the scheduler ends up being pg_cron or the node-cron fallback.
+// `executeJob` receives the process-wide client and settings reader; the job
+// bodies are dependency-injected (jobs/execute.ts) and idempotent by
+// construction (D41), so this route stays a thin, authenticated dispatcher.
 // =============================================================================
 
 import { NextResponse } from "next/server";
 
 import { findJob } from "@/jobs";
+import { executeJob } from "@/jobs/execute";
+import { okResponse } from "@/lib/api";
+import { prisma } from "@/lib/db";
+import { toErrorResponse } from "@/lib/errors";
+import { settings } from "@/lib/settings";
 
 /** Comparison is constant-time so the endpoint cannot be used as an oracle. */
 function secretsMatch(provided: string, expected: string): boolean {
@@ -41,7 +48,7 @@ function extractSecret(request: Request): string | null {
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ job: string }> },
-): Promise<NextResponse> {
+): Promise<Response> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     return NextResponse.json(
@@ -74,15 +81,26 @@ export async function POST(
     );
   }
 
-  return NextResponse.json(
-    {
-      ok: false,
-      error: {
-        code: "NOT_IMPLEMENTED",
-        message: `Job "${job.name}" is not implemented yet. Scheduled jobs land in F7.`,
+  if (!job.implemented) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: {
+          code: "NOT_IMPLEMENTED",
+          message: `Job "${job.name}" is not implemented yet. Scheduled jobs land in F7.`,
+        },
+        data: { job: job.name, schedule: job.schedule, implemented: job.implemented },
       },
-      data: { job: job.name, schedule: job.schedule, implemented: job.implemented },
-    },
-    { status: 501 },
-  );
+      { status: 501 },
+    );
+  }
+
+  try {
+    const summary = await executeJob(job.name, { db: prisma, settings, now: new Date() });
+    return okResponse({ job: job.name, schedule: job.schedule, summary });
+  } catch (error) {
+    // A failing job answers the §10 failure envelope with nothing internal
+    // in it; the real error is logged server-side by toErrorResponse.
+    return toErrorResponse(error);
+  }
 }

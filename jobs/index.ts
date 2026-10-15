@@ -1,14 +1,18 @@
 // =============================================================================
-// jobs/index.ts — §9 scheduled job registry (stub: F1 ships the contract only).
+// jobs/index.ts — §9 scheduled job registry.
 //
 // Every scheduled task in the spec is registered here so the cron route has a
-// single allow-list to validate `{job}` against, and so F7 implements jobs by
-// adding a `run` to an existing entry instead of inventing a new dispatch
-// shape. The real jobs (and the pg_cron scheduling, or the node-cron fallback
-// from D1) land in F7; nothing here executes yet.
+// single allow-list to validate `{job}` against. F4a implements the two cycle
+// jobs — their bodies live in jobs/execute.ts, wired to their names there — so
+// the route dispatches them instead of answering 501. The remaining jobs (and
+// the pg_cron scheduling, or the node-cron fallback from D1) land in F7.
 //
-// §9: "Idempotentes (usar advisory locks: pg_try_advisory_lock)".
-// `implemented: false` is what makes the route answer 501 rather than pretend.
+// §9: "Idempotentes (usar advisory locks: pg_try_advisory_lock)" — the two
+// implemented jobs are idempotent by construction (guarded INSERTs); D41
+// documents that trade-off and why the advisory lock is F7's concern.
+//
+// `implemented: true` is what lets the route hand the name to executeJob;
+// `implemented: false` keeps the honest 501.
 // =============================================================================
 
 export interface JobDefinition {
@@ -26,13 +30,13 @@ export const JOBS: readonly JobDefinition[] = [
     name: "cycle:ensure",
     description: "Guarantees the cycle containing now() exists and creates the next four.",
     schedule: "every hour",
-    implemented: false,
+    implemented: true,
   },
   {
     name: "cycle:obligations",
     description: "Inserts cycle_obligations for every ACTIVE user when a cycle is created.",
     schedule: "on cycle creation",
-    implemented: false,
+    implemented: true,
   },
   {
     name: "cycle:reminders",

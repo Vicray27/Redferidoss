@@ -1,14 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "../app/api/cron/[job]/route";
+import { executeJob } from "@/jobs/execute";
 
 /**
- * The cron endpoint is a security boundary, and it is the one route in F1
- * that must be provable without a database: everything it does before 501 is
- * authentication and lookup. §9 names `x-cron-secret`; `Authorization: Bearer`
- * is the canonical form (D13). An unset CRON_SECRET must disable the endpoint
- * rather than open it.
+ * The cron endpoint is a security boundary: authentication and lookup happen
+ * before any job runs, and an unset CRON_SECRET must disable it rather than
+ * open it. F4a makes the two cycle jobs executable, so the happy path is
+ * tested against a mocked runner — `executeJob` is the seam; the SQL it emits
+ * is asserted in tests/cycle-jobs.test.ts — while every other registered job
+ * must still answer the honest 501.
  */
+
+vi.mock("@/jobs/execute", () => ({ executeJob: vi.fn() }));
+
+const mockExecute = vi.mocked(executeJob);
 
 const SECRET = "s3cr3t-cron-token-for-tests";
 
@@ -56,7 +62,9 @@ describe("POST /api/cron/{job} — authentication", () => {
   });
 
   it("accepts the spec's x-cron-secret header as well", async () => {
-    const response = await call("cycle:ensure", { "x-cron-secret": SECRET });
+    // A still-stubbed job proves the header passed authentication without
+    // asserting anything about dispatch: the 501 is the honest stage answer.
+    const response = await call("cycle:reminders", { "x-cron-secret": SECRET });
     expect(response.status).toBe(501);
   });
 
@@ -80,6 +88,8 @@ describe("POST /api/cron/{job} — authentication", () => {
 describe("POST /api/cron/{job} — dispatch", () => {
   beforeEach(() => {
     process.env.CRON_SECRET = SECRET;
+    mockExecute.mockReset();
+    mockExecute.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -87,33 +97,71 @@ describe("POST /api/cron/{job} — dispatch", () => {
   });
 
   it("answers 501 for a registered but unimplemented job", async () => {
-    const response = await call("cycle:ensure", authorized);
+    const response = await call("cycle:reminders", authorized);
     expect(response.status).toBe(501);
 
     const body = await response.json();
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("NOT_IMPLEMENTED");
-    expect(body.data.job).toBe("cycle:ensure");
+    expect(body.data.job).toBe("cycle:reminders");
     expect(body.data.implemented).toBe(false);
+    expect(mockExecute).not.toHaveBeenCalled();
   });
 
   it("answers 404 for a job that is not in the registry", async () => {
     const response = await call("nope:not-a-job", authorized);
     expect(response.status).toBe(404);
     expect((await response.json()).error.code).toBe("UNKNOWN_JOB");
+    expect(mockExecute).not.toHaveBeenCalled();
   });
 
-  it("is registered for every job the spec lists", async () => {
-    const names = [
+  it("runs an implemented job and returns its summary in the §10 envelope", async () => {
+    const summary = { planned: 5, created: 4, skipped: 1, raced: 0 };
+    mockExecute.mockResolvedValueOnce(summary);
+
+    const response = await call("cycle:ensure", authorized);
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.data.job).toBe("cycle:ensure");
+    expect(body.data.schedule).toBe("every hour");
+    expect(body.data.summary).toEqual(summary);
+
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+    expect(mockExecute).toHaveBeenCalledWith(
       "cycle:ensure",
-      "cycle:obligations",
-      "cycle:reminders",
-      "cycle:close",
-      "tree:verify",
-      "files:gc",
-    ];
-    for (const name of names) {
+      expect.objectContaining({ now: expect.any(Date) }),
+    );
+  });
+
+  it("maps a failing job to the §10 failure envelope without leaking it", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockExecute.mockRejectedValueOnce(
+      new Error('relation "payment_cycles" does not exist at character 13'),
+    );
+
+    const response = await call("cycle:obligations", authorized);
+    expect(response.status).toBe(500);
+
+    const body = await response.json();
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("INTERNAL_ERROR");
+    expect(JSON.stringify(body)).not.toContain("payment_cycles");
+    expect(logged).toHaveBeenCalled();
+
+    logged.mockRestore();
+  });
+
+  it("is registered for every job the spec lists, each at its own stage", async () => {
+    const stubs = ["cycle:reminders", "cycle:close", "tree:verify", "files:gc"];
+    for (const name of stubs) {
       expect((await call(name, authorized)).status, name).toBe(501);
+    }
+
+    const implemented = ["cycle:ensure", "cycle:obligations"];
+    for (const name of implemented) {
+      expect((await call(name, authorized)).status, name).toBe(200);
     }
   });
 });
