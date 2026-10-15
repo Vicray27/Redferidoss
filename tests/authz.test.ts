@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SCOPE_ALIAS,
   DOWNLINE_DEPTH_SETTING,
+  FORBIDDEN_MESSAGE,
   ForbiddenError,
   createAuthorization,
   isStaffActor,
@@ -11,6 +12,7 @@ import {
   type SessionActor,
   type SettingsLike,
 } from "../lib/authz";
+import { AppError, toErrorResponse } from "../lib/errors";
 
 /**
  * No database required: `createAuthorization(db, settings)` takes both
@@ -161,6 +163,23 @@ describe("ForbiddenError — no enumeration oracle", () => {
     expect(error.reason).toBe("target is outside the actor's subtree");
     expect(error.status).toBe(403);
     expect(error.code).toBe("FORBIDDEN");
+  });
+
+  it("is an AppError, so the §10 mapper needs no special case", async () => {
+    // A guard that throws outside the error hierarchy would surface as a 500
+    // and turn "not allowed" into "server broken" — both wrong and noisier.
+    expect(new ForbiddenError("x")).toBeInstanceOf(AppError);
+
+    const response = toErrorResponse(new ForbiddenError("x"));
+    expect(response.status).toBe(403);
+
+    const parsed = (await response.json()) as {
+      ok: boolean;
+      error: { code: string; message: string };
+    };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe("FORBIDDEN");
+    expect(parsed.error.message).toBe(FORBIDDEN_MESSAGE);
   });
 });
 

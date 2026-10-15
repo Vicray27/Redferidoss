@@ -33,6 +33,7 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "./db";
+import { AppError } from "./errors";
 import { settings as processSettings, type SettingsReader } from "./settings";
 import type { SessionPayload } from "./auth/session";
 import type { UserRole } from "./users";
@@ -75,14 +76,17 @@ export function isStaffActor(actor: SessionActor): boolean {
  * user sees. Keeping them apart is what stops the guard from becoming an
  * enumeration oracle: "you cannot see this person" and "they are too deep in
  * your network" must be indistinguishable from outside.
+ *
+ * It extends `AppError` (lib/errors.ts) so the §10 response mapper needs no
+ * special case: every failure in this codebase goes through the same envelope.
  */
-export class ForbiddenError extends Error {
-  readonly code = "FORBIDDEN";
-  readonly status = 403;
+export const FORBIDDEN_MESSAGE = "No tienes permiso para ver esta información.";
+
+export class ForbiddenError extends AppError {
   readonly reason: string;
 
   constructor(reason: string) {
-    super("No tienes permiso para ver esta información.");
+    super(403, "FORBIDDEN", FORBIDDEN_MESSAGE);
     this.name = "ForbiddenError";
     this.reason = reason;
   }
