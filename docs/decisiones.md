@@ -629,3 +629,20 @@ resuelve hacia lo más configurable (spec §18.7).
   `NO_REPORT_WINDOW`. La "Visión Celular" del líder (reunión propia +
   actividad de su gente directa) se compone con `myReports` +
   `downlineReports`, ambos filtrados por la misma capa de autorización.
+
+### D45 - Los comprobantes se sirven por GET /api/files/[key] con autorización dueño-o-staff
+- Contexto: los comprobantes viven fuera del web root (D42) precisamente porque
+  pueden contener datos bancarios personales; pero el revisor necesita abrirlos
+  desde `/admin/revisiones` para aprobar o rechazar con criterio. Sin una ruta
+  de lectura, la revisión era a ciegas.
+- Decisión: `GET /api/files/[key]` con sesión obligatoria; la fila de `files`
+  decide quién puede leer: el dueño (`owner_id`) o cualquier rol staff
+  (`ROOT`/`ADMIN`, vía `isStaffActor`). La clave se busca primero en `files`
+  (sin fila ⇒ 404), así que ninguna ruta se arma con input crudo; el MIME sale
+  de la fila y la respuesta viaja con `Content-Disposition: inline` y
+  `Cache-Control: private, no-store`.
+- Consecuencias: el staff audita sin copiar archivos a una carpeta pública y el
+  rechazo de un miembro no puede venir de "no pude ver el comprobante". Un
+  futuro almacenamiento S3 reemplaza solo esta ruta y `lib/storage.ts`; los
+  tests de ruta existentes (`uploads-route`) marcan el patrón para cubrirla si
+  hiciera falta.

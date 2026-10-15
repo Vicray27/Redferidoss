@@ -63,6 +63,7 @@ Además de `DATABASE_URL` y `TZ_DEFAULT`, el stack necesita:
 | `ROOT_PASSWORD` | Su contraseña. **Sólo para el seed inicial**; el seed aborta si falta. |
 | `AUTH_SECRET` | **Requerida para que exista el login.** Firma la cookie de sesión (HS256). |
 | `CRON_SECRET` | Protege `POST /api/cron/{job}`. Sin ella la ruta responde 503 (no se abre). |
+| `UPLOADS_DIR` | Carpeta de comprobantes (default `./uploads`; en Docker `/app/uploads` con volumen propio, D42). |
 
 ### `AUTH_SECRET` es obligatoria y no tiene default
 
@@ -292,7 +293,7 @@ Todos responden el envelope de §10: `{ok:true,data}` o
 | `/r/[code]`, `/invite/[token]` | Página pública de registro; invitación inválida o sin cupo muestra un error explícito, no un formulario. |
 | `components/register/register-form.tsx` | Formulario: base con `registerCoreSchema` (misma definición que el servidor) + campos dinámicos. |
 | `components/dynamic-form/` | `build-zod-schema.ts` (espejo cliente de las reglas del servidor) y `field-renderer.tsx`; los FILE se omiten (§8.3, D25). |
-| `/portal` | Inicio: cupos, tamaño de red, referidos directos; pagos llegan con F4 (D33). |
+| `/portal` | Inicio: cupos, tamaño de red, referidos directos; la semana y los aportes viven en `/portal/semana` (F4a). |
 | `/portal/network`, `/portal/network/[id]` | Árbol perezoso con búsqueda y ficha con subárbol, breadcrumb y campos personalizados. |
 | `/portal/invitations` | Link permanente con QR, invitación de un solo uso, pendientes y revocar (Server Actions). |
 | `components/network/network-tree.tsx` | Árbol colapsable; cada expansión es `GET /api/network/children`. |
@@ -325,3 +326,48 @@ que falla si alguna lectura de red viaja sin fragmento de scope para un
 miembro. Las mitades de integración contra Postgres real quedan marcadas para
 el servidor (igual que en fases anteriores). Las decisiones D19–D36 están en
 `docs/decisiones.md`.
+
+## La semana y los aportes (F4a)
+
+Ciclos planificados, reporte semanal de la Visión Celular y el aporte de la
+semana con revisión de staff (§5.5, §8.2, §8.5). La corrección de privacidad
+D40 (el miembro ve sólo a sus referidos directos) aplica a todas las lecturas.
+
+### Endpoints
+
+| Método y ruta | Qué hace | Protección |
+|---|---|---|
+| `POST /api/uploads` | Sube un comprobante (multipart, campo `file`, ≤ 10 MB, JPG/PNG/WEBP/PDF por magic bytes) y devuelve `fileId`/`key` (D42). | sesión + `assertSameOrigin` + throttle 30/10 min por usuario |
+| `GET /api/files/[key]` | Sirve un comprobante guardado en disco; sólo su dueño o staff (D45). | `requireApiSession` + dueño-o-staff + `Cache-Control: private, no-store` |
+| `POST /api/cron/{job}` | `cycle:ensure` y `cycle:obligations` implementados; los otros 4 jobs siguen 501 (D41). | `CRON_SECRET` + mismo-origen |
+
+Todos responden el envelope de §10.
+
+### Páginas
+
+| Ruta | Qué hace |
+|---|---|
+| `/portal/semana` | Reporte semanal (upsert hasta el cierre, D44), reporte de aporte con comprobante en dos pasos (D29/D42), historial propio y tablero "Visión Celular" con el alcance del actor. |
+| `/admin/revisiones` | Cola de aportes pendientes: aprobar cumple la obligación y notifica; rechazar exige motivo (D43). |
+| `/admin/configuracion` | Los 40 ajustes de §6 por grupo: sólo escribe lo que cambió, audita cada cambio y respeta `editable_by`. |
+
+### Librerías de la fase
+
+| Archivo | Qué hace |
+|---|---|
+| `lib/payments.ts` | Ventana `[starts_at, due_at)`, monto vs `expected_amount`, referencia/comprobante (D43), revisión y cumplimiento de `cycle_obligations`; `@pay:*`. |
+| `lib/weekly-reports.ts` | UPSERT por `(user_id, cycle_id)` con validación de contadores y visitantes; `@weekly:*`. |
+| `lib/settings-admin.ts` | Valida contra el catálogo, escribe `settings`, audita cada cambio e invalida la caché local; `@settings:*`. |
+| `lib/storage.ts` / `lib/uploads.ts` | Guardado local en `UPLOADS_DIR`, sniffing de magic bytes y sha256. |
+| `lib/payments-actions.ts`, `lib/weekly-actions.ts`, `lib/settings-actions.ts` | Server Actions de las tres pantallas: traducen `AppError` a mensajes y revalidan; ninguna regla vive ahí. |
+| `jobs/execute.ts` | `cycle:ensure` (planifica 5 ventanas) y `cycle:obligations`, idempotentes por construcción (D41). |
+
+### Verificación local
+
+```sh
+pnpm test        # 501 tests de unidad, sin base de datos
+pnpm typecheck
+pnpm db:check:drift
+```
+
+Las decisiones D37–D45 están en `docs/decisiones.md`.
