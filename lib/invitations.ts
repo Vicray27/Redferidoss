@@ -297,6 +297,7 @@ export function createInvitationsService(
 
     const rows = await db.$queryRaw<QuotaRow[]>`
       /* @inv:quota */
+      WITH params AS (SELECT ${userId}::uuid AS user_id, ${exclude}::uuid AS exclude_id)
       SELECT
         (SELECT count(*) FROM users ch
           WHERE ch.sponsor_id = u.id AND ch.deleted_at IS NULL) AS children,
@@ -306,9 +307,9 @@ export function createInvitationsService(
             AND i.revoked_at IS NULL
             AND (i.expires_at IS NULL OR i.expires_at > now())
             AND i.uses < i.max_uses
-            AND (${exclude}::uuid IS NULL OR i.id <> ${exclude}::uuid)) AS pending
-      FROM users u
-      WHERE u.id = ${userId}::uuid
+            AND (p.exclude_id IS NULL OR i.id <> p.exclude_id)) AS pending
+      FROM users u, params p
+      WHERE u.id = p.user_id
     `;
 
     const row = rows[0];
