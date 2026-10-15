@@ -562,3 +562,23 @@ resuelve hacia lo más configurable (spec §18.7).
   en el envelope §10 de `/api/cron/{job}`. `expected_amount` cruza a
   NUMERIC(14,2) siempre por el lado DECIMAL de lib/money.ts
   (`formatAmount(parseAmount(...))`), nunca como float (A14).
+
+### D42 - Comprobantes en disco local durante F4 (desviación de §2/§10.4)
+- Contexto: §2 y §10.4 especifican almacenamiento S3-compatible (MinIO) con
+  URLs pre-firmadas; docker-compose define las variables S3_* pero el
+  contenedor MinIO está deshabilitado (pull del registry bloqueado) y el
+  servidor de la iglesia corre sólo app + Postgres. El circuito semanal no
+  puede quedar bloqueado por un servicio de objetos que no existe en el
+  despliegue.
+- Decisión: `lib/storage.ts` implementa un driver de disco local detrás de
+  tres métodos (`save`/`read`/`remove` por key) y `POST /api/uploads` — en vez
+  de `/api/uploads/sign` — recibe el multipart directamente (≤10 MB,
+  JPG/PNG/WEBP/PDF por magic bytes). La tabla `files` sigue siendo el registro
+  y su `key` es agnóstica al backend: un driver S3/MinIO entra sin tocar a los
+  llamadores. Los binarios viven en `UPLOADS_DIR` (default `./uploads`; volumen
+  Docker `/app/uploads`) y nunca en la base.
+- Consecuencias: sin URL pre-firmada la subida pasa por el servidor — más
+  estricta (valida el contenido real, no el MIME declarado) y más lenta para
+  archivos grandes; el endpoint va con throttle por usuario (30 cada 10 min).
+  El flujo cliente es en dos pasos (subir → Server Action con `fileId`, D29)
+  porque las Server Actions de Next limitan el cuerpo a 1 MB.
