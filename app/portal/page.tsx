@@ -40,7 +40,7 @@ export default async function PortalPage() {
     <SessionShell
       session={session}
       title="Portal de referidos"
-      description="Tu red, tus invitaciones y (pronto) tus pagos."
+      description="Tu red, tus invitaciones, tu semana y tus aportes."
     >
       <dl className="grid gap-4 sm:grid-cols-3">
         <Stat label="Cupos disponibles" value={`${quota.left} de ${quota.max}`} />
@@ -59,12 +59,11 @@ export default async function PortalPage() {
           title="Invitaciones"
           description="Tu link permanente, invitaciones de un solo uso y cupos."
         />
-        <div className="rounded-lg border border-dashed bg-background p-5 text-sm text-muted-foreground">
-          <p className="font-medium text-foreground">Pagos</p>
-          <p className="mt-1">
-            El reporte de pagos y el estado de la semana llegan con la fase de pagos.
-          </p>
-        </div>
+        <NavCard
+          href="/portal/semana"
+          title="Semana y aportes"
+          description="Reporte de la Visión Celular, el aporte de esta semana y tu historial."
+        />
       </div>
     </SessionShell>
   );
