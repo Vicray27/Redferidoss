@@ -1,5 +1,6 @@
 import { SessionShell } from "@/components/session-shell";
 import { requireStaffSession } from "@/lib/auth/require";
+import { authorization } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { createPaymentsService } from "@/lib/payments";
 import { settings } from "@/lib/settings";
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ReviewPage() {
   const session = await requireStaffSession("/admin/revisiones");
-  const payments = createPaymentsService(prisma, settings);
+  const payments = createPaymentsService(prisma, settings, authorization);
 
   const queue = await payments.listReviewQueue({ limit: 50 });
 

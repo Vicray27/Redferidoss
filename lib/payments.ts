@@ -25,9 +25,15 @@
 //
 // Errors are AppError subclasses: 400 ValidationError with a field-keyed
 // `details` map, 403 ForbiddenError, 404 NotFoundError, 409 ConflictError.
+//
+// D39/D40: `downlineOfferings` (bottom) serves the member face — direct
+// invitees, the FACT of their offering, and the amount only while
+// visibility.member_sees_downline_amounts is on.
 // =============================================================================
 
-import { ForbiddenError } from "./authz";
+import { Prisma } from "@prisma/client";
+
+import { ForbiddenError, type SessionActor } from "./authz";
 import { MS_PER_DAY } from "./cycles";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { compareAmounts, formatAmount, parseAmount } from "./money";
@@ -41,6 +47,11 @@ export interface PaymentsDb {
 
 /** Settings subset the service depends on — injectable in tests. */
 export type PaymentsSettings = Pick<SettingsReader, "getOrThrow">;
+
+/** Authorization surface the downline read needs (lib/authz satisfies it). */
+export interface PaymentsAuthz {
+  scopeFilter(actor: SessionActor, options?: { alias?: string }): Promise<{ fragment: Prisma.Sql; unrestricted: boolean }>;
+}
 
 export type ReportStatus = "PENDING" | "APPROVED" | "REJECTED";
 export type ReviewDecision = "APPROVED" | "REJECTED";
@@ -107,11 +118,20 @@ export interface ReviewQueueRow {
   periodKey: string;
 }
 
+/** A direct invitee and the fact of their offering inside a cycle (D39). */
+export interface DownlineOfferingRow {
+  userId: string; fullName: string; publicCode: string; hasOffering: boolean;
+  /** Present only when visibility.member_sees_downline_amounts is true. */
+  amount?: string; currency?: string;
+}
+
 export interface PaymentsService {
   createReport(actor: PaymentsActor, input: CreateReportInput): Promise<CreatedReport>;
   reviewReport(actor: PaymentsActor, reportId: string, decision: ReviewDecision, note?: string | null): Promise<ReviewedReport>;
   listMyReports(actor: PaymentsActor, options?: { limit?: number }): Promise<MyReportRow[]>;
   listReviewQueue(options?: { limit?: number; cycleId?: string }): Promise<ReviewQueueRow[]>;
+  /** §8.4/D39: the actor's direct invitees and their offering for a cycle. */
+  downlineOfferings(actor: SessionActor, options: { cycleId: string; limit?: number }): Promise<DownlineOfferingRow[]>;
 }
 
 export interface PaymentsServiceOptions {
@@ -132,6 +152,7 @@ const SETTING_KEYS = {
   autoApprove: "payments.auto_approve",
   requireProof: "payments.require_proof",
   requireReference: "payments.require_reference",
+  memberSeesDownlineAmounts: "visibility.member_sees_downline_amounts",
 } as const;
 
 /** Unique violation in the pg driver (`23505`) or Prisma (`P2002`). */
@@ -161,9 +182,14 @@ interface AuthorSnapshotRow {
   depth: number;
 }
 
+interface DownlineOfferingRawRow {
+  userId: string; fullName: string; publicCode: string; reportId: string | null; amount: string | null; currency: string | null;
+}
+
 export function createPaymentsService(
   db: PaymentsDb,
   settings: PaymentsSettings,
+  authz: PaymentsAuthz,
   options: PaymentsServiceOptions = {},
 ): PaymentsService {
   const now = options.now ?? (() => new Date());
@@ -417,6 +443,34 @@ export function createPaymentsService(
         ORDER BY r.reported_at ASC
         LIMIT ${limit}
       `;
+    },
+
+    async downlineOfferings(actor, listOptions) {
+      // D39: while the setting is off the amount is OMITTED server-side — never masked.
+      const showAmounts = await settings.getOrThrow<boolean>(SETTING_KEYS.memberSeesDownlineAmounts);
+      const limit = clampLimit(listOptions.limit);
+      const scope = await authz.scopeFilter(actor, { alias: "u" });
+      const condition = scope.unrestricted ? Prisma.empty : Prisma.sql`AND ${scope.fragment}`;
+
+      const rows = await db.$queryRaw<DownlineOfferingRawRow[]>`
+        /* @pay:downline-offerings */
+        SELECT u.id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
+               r.id AS "reportId", r.amount::text AS amount, r.currency
+        FROM users u
+        LEFT JOIN payment_reports r
+          ON r.user_id = u.id AND r.cycle_id = ${listOptions.cycleId}::uuid AND r.status <> 'REJECTED'
+        WHERE u.deleted_at IS NULL
+          AND u.id <> ${actor.userId}::uuid
+          ${condition}
+        ORDER BY u.full_name
+        LIMIT ${limit}
+      `;
+
+      return rows.map((row) => {
+        const base = { userId: row.userId, fullName: row.fullName, publicCode: row.publicCode, hasOffering: row.reportId !== null };
+        if (!showAmounts || row.amount === null || row.currency === null) return base;
+        return { ...base, amount: formatAmount(parseAmount(row.amount)), currency: row.currency };
+      });
     },
   };
 }

@@ -56,7 +56,7 @@ export default async function WeekPage() {
   const session = await requireSession("/portal/semana");
   const actor = toActor(session);
 
-  const payments = createPaymentsService(prisma, settings);
+  const payments = createPaymentsService(prisma, settings, authorization);
   const weekly = createWeeklyReportsService(prisma, authorization);
 
   const now = new Date();
@@ -104,6 +104,9 @@ export default async function WeekPage() {
   const downline = cycle
     ? await weekly.downlineReports(actor, { cycleId: cycle.id, limit: 25 })
     : [];
+  const offerings = cycle ? await payments.downlineOfferings(actor, { cycleId: cycle.id, limit: 25 }) : [];
+  const offeringByUser = new Map(offerings.map((row) => [row.userId, row]));
+  const board = downline.map((row) => ({ ...row, offering: offeringByUser.get(row.userId) }));
 
   const weeklyDefaults: WeekDefaults | null = myWeeklyReport
     ? {
@@ -237,6 +240,7 @@ export default async function WeekPage() {
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-4 py-3 font-medium">Persona</th>
                   <th className="px-4 py-3 font-medium">Asistió</th>
+                  <th className="px-4 py-3 font-medium">Ofrenda</th>
                   <th className="px-4 py-3 font-medium">Células</th>
                   <th className="px-4 py-3 font-medium">Asistentes</th>
                   <th className="px-4 py-3 font-medium">Visitantes nuevos</th>
@@ -244,7 +248,7 @@ export default async function WeekPage() {
                 </tr>
               </thead>
               <tbody>
-                {downline.map((row) => (
+                {board.map((row) => (
                   <tr key={row.id} className="border-b last:border-0">
                     <td className="px-4 py-3">
                       <span className="font-medium">{row.fullName}</span>
@@ -253,6 +257,12 @@ export default async function WeekPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">{row.attended ? "Sí" : "No"}</td>
+                    <td className="px-4 py-3">
+                      {row.offering?.hasOffering ? "Sí" : "No"}
+                      {row.offering?.amount ? (
+                        <span className="block text-xs text-muted-foreground">{row.offering.amount} {row.offering.currency}</span>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-3">
                       {row.cellsHeld} de {row.cellsTotal}
                     </td>

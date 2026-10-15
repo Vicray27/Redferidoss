@@ -16,6 +16,7 @@
 import { revalidatePath } from "next/cache";
 
 import { getSession } from "./auth/require";
+import { authorization } from "./authz";
 import { prisma } from "./db";
 import { AppError } from "./errors";
 import { createPaymentsService } from "./payments";
@@ -48,7 +49,7 @@ export async function submitPaymentReportAction(input: {
   if (!session) return { ok: false, message: "Debes iniciar sesión para continuar." };
 
   try {
-    const payments = createPaymentsService(prisma, settings);
+    const payments = createPaymentsService(prisma, settings, authorization);
     // `session.userId` is the only id ever passed in: the service resolves the
     // cycle and the ownership of the proof under the caller's own identity.
     const created = await payments.createReport(
@@ -82,7 +83,7 @@ export async function reviewPaymentReportAction(input: {
   if (!session) return { ok: false, message: "Debes iniciar sesión para continuar." };
 
   try {
-    const payments = createPaymentsService(prisma, settings);
+    const payments = createPaymentsService(prisma, settings, authorization);
     // The service re-checks that the actor is staff (ForbiddenError otherwise);
     // the action cannot grant itself authority by calling with an id.
     const reviewed = await payments.reviewReport(

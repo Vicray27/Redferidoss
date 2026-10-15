@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { createAuthorization, type SessionActor } from "../lib/authz";
 import {
   createPaymentsService,
   isUniqueViolation,
@@ -24,7 +25,7 @@ const REVIEWER = { id: "admin-1", role: "ADMIN" };
 type Handler = (values: unknown[]) => unknown;
 
 class PayFake implements PaymentsDb {
-  readonly queries: Array<{ marker: string; values: unknown[] }> = [];
+  readonly queries: Array<{ marker: string; text: string; values: unknown[] }> = [];
   readonly executions: Array<{ marker: string; values: unknown[] }> = [];
   private readonly queryHandlers = new Map<string, Handler>();
   private readonly execHandlers = new Map<string, Handler>();
@@ -39,7 +40,7 @@ class PayFake implements PaymentsDb {
     return this;
   }
 
-  callsFor(marker: string): Array<{ marker: string; values: unknown[] }> {
+  callsFor(marker: string): Array<{ marker: string; text: string; values: unknown[] }> {
     return this.queries.filter((call) => call.marker === marker);
   }
 
@@ -57,7 +58,7 @@ class PayFake implements PaymentsDb {
     if (!marker) throw new Error(`PayFake: unmarked statement: ${text}`);
     const handler = this.queryHandlers.get(marker);
     if (!handler) throw new Error(`PayFake: no handler for ${marker}`);
-    this.queries.push({ marker, values });
+    this.queries.push({ marker, text, values });
     return (await handler(values)) as T;
   }
 
@@ -80,6 +81,9 @@ function makeSettings(overrides: Record<string, unknown> = {}): PaymentsSettings
     "payments.auto_approve": false,
     "payments.require_proof": false,
     "payments.require_reference": true,
+    "visibility.downline_depth_visible": 0,
+    // D39 default: the downline amount stays hidden unless an admin enables it.
+    "visibility.member_sees_downline_amounts": false,
     ...overrides,
   };
   return {
@@ -88,6 +92,18 @@ function makeSettings(overrides: Record<string, unknown> = {}): PaymentsSettings
       return values[key] as T;
     },
   };
+}
+
+/** The innermost non-empty Sql fragment embedded in a query's bind values. */
+function sqlFragment(values: unknown[]): { sql: string; values: unknown[] } | null {
+  for (const value of values) {
+    if (value && typeof value === "object" && typeof (value as { sql?: unknown }).sql === "string") {
+      const nested = sqlFragment(((value as { values?: unknown[] }).values ?? []) as unknown[]);
+      if (nested) return nested;
+      if ((value as { sql: string }).sql.trim() !== "") return value as { sql: string; values: unknown[] };
+    }
+  }
+  return null;
 }
 
 const MY_ROW = {
@@ -144,7 +160,8 @@ function buildService(overrides: { settings?: Record<string, unknown>; now?: Dat
     .on("my-reports", () => [MY_ROW])
     .on("review-queue", () => [QUEUE_ROW]);
 
-  const service = createPaymentsService(db, makeSettings(overrides.settings), { now: () => overrides.now ?? NOW });
+  const settings = makeSettings(overrides.settings);
+  const service = createPaymentsService(db, settings, createAuthorization(db, settings), { now: () => overrides.now ?? NOW });
   return { db, service, method };
 }
 
@@ -396,6 +413,45 @@ describe("lists", () => {
 
     expect(rows).toEqual([QUEUE_ROW]);
     expect(db.valuesOf("review-queue")).toEqual(["cycle-1", "cycle-1", 10]);
+  });
+});
+
+describe("downlineOfferings", () => {
+  const VIEWER: SessionActor = { userId: ACTOR.id, role: "MEMBER" };
+
+  it("answers sí/no from the joined report and gates the amount on the setting (D39)", async () => {
+    const shown = buildService({ settings: { "visibility.member_sees_downline_amounts": true } });
+    shown.db.on("downline-offerings", () => [
+      { userId: "u-2", fullName: "Ana", publicCode: "ANA001", reportId: "report-9", amount: "10.00", currency: "USD" },
+      { userId: "u-3", fullName: "Beto", publicCode: "BET001", reportId: null, amount: null, currency: null },
+    ]);
+    expect(await shown.service.downlineOfferings(VIEWER, { cycleId: "cycle-1" })).toEqual([
+      { userId: "u-2", fullName: "Ana", publicCode: "ANA001", hasOffering: true, amount: "10.00", currency: "USD" },
+      { userId: "u-3", fullName: "Beto", publicCode: "BET001", hasOffering: false },
+    ]);
+
+    const hidden = buildService();
+    hidden.db.on("downline-offerings", () => [
+      { userId: "u-2", fullName: "Ana", publicCode: "ANA001", reportId: "report-9", amount: "10.00", currency: "USD" },
+    ]);
+    const [row] = await hidden.service.downlineOfferings(VIEWER, { cycleId: "cycle-1" });
+    expect(row).toStrictEqual({ userId: "u-2", fullName: "Ana", publicCode: "ANA001", hasOffering: true });
+    expect("amount" in row!).toBe(false);
+    expect(JSON.stringify(row)).not.toContain("10.00");
+  });
+
+  it("ANDs the D40 scope cap (depth 1) and the non-REJECTED predicate into the statement", async () => {
+    const { db, service } = buildService();
+    db.on("downline-offerings", () => []);
+
+    await service.downlineOfferings(VIEWER, { cycleId: "cycle-9" });
+
+    const call = db.callsFor("downline-offerings")[0]!;
+    expect(call.text).toContain("r.status <> 'REJECTED'");
+    expect(call.values).toContain("cycle-9");
+    const fragment = sqlFragment(call.values);
+    expect(fragment?.sql).toContain("sc.depth <=");
+    expect(fragment?.values).toEqual([VIEWER.userId, 1, 1]);
   });
 });
 
