@@ -175,3 +175,57 @@ export function computeCycleBounds({
     dueAt: new Date(endsAt.getTime() + graceHours * 3_600_000),
   };
 }
+
+// =============================================================================
+// F4 (§5.4, §5.9) — consecutive windows and the effective cycle status.
+//
+// `payment_cycles.status` stores only two states that matter to the jobs:
+// OPEN (normal) and CLOSED (the F7 settlement job ran). OPEN/GRACE is derived
+// from the clock at read time, so no scheduler is needed for the label the
+// member sees: [starts_at, ends_at) is OPEN, [ends_at, due_at) is GRACE and
+// [due_at, ∞) is effectively CLOSED. A stored CLOSED is terminal: a later
+// settings change must not reopen a settled week. Documented as D37.
+// =============================================================================
+
+export type EffectiveCycleStatus = "OPEN" | "GRACE" | "CLOSED";
+
+export interface CycleStatusInput {
+  /** Stored value from payment_cycles.status ("OPEN" | "CLOSED"). */
+  status: string;
+  startsAt: Date;
+  endsAt: Date;
+  dueAt: Date;
+}
+
+/** Label a cycle shows at `now`, honouring the stored status as terminal CLOSED. */
+export function effectiveCycleStatus(row: CycleStatusInput, now: Date): EffectiveCycleStatus {
+  if (row.status === "CLOSED") return "CLOSED";
+  const instant = now.getTime();
+  if (instant < row.endsAt.getTime()) return "OPEN";
+  if (instant < row.dueAt.getTime()) return "GRACE";
+  return "CLOSED";
+}
+
+/** A report can be filed while the cycle window is open or in grace (§5.5). */
+export function isReportable(row: CycleStatusInput, now: Date): boolean {
+  if (row.status === "CLOSED") return false;
+  const instant = now.getTime();
+  return instant >= row.startsAt.getTime() && instant < row.dueAt.getTime();
+}
+
+/**
+ * `count` consecutive windows starting with the one that contains `input.now`.
+ * Each following window is computed from the previous `ends_at`, which is the
+ * next window's local midnight start, so the sequence is contiguous by
+ * construction — DST transitions included.
+ */
+export function planCycles(input: CycleBoundsInput, count = 5): CycleBounds[] {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new RangeError(`count must be a positive integer, received ${count}`);
+  }
+  const windows: CycleBounds[] = [computeCycleBounds(input)];
+  for (let index = 1; index < count; index += 1) {
+    windows.push(computeCycleBounds({ ...input, now: windows[index - 1].endsAt }));
+  }
+  return windows;
+}

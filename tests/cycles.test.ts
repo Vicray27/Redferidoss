@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { computeCycleBounds, isoWeekKey, UnsupportedCycleFrequencyError } from "../lib/cycles";
+import {
+  computeCycleBounds,
+  effectiveCycleStatus,
+  isReportable,
+  isoWeekKey,
+  planCycles,
+  UnsupportedCycleFrequencyError,
+} from "../lib/cycles";
 
 /**
  * Pure date maths, no database. The invariants come straight from the spec:
@@ -140,5 +147,97 @@ describe("computeCycleBounds — timezone handling", () => {
 
     expect(winter.startsAt.toISOString()).toBe("2026-01-05T05:00:00.000Z"); // EST
     expect(summer.startsAt.toISOString()).toBe("2026-07-06T04:00:00.000Z"); // EDT
+  });
+});
+
+describe("planCycles — consecutive windows (F4, §5.4)", () => {
+  const base = { timezone: CARACAS, weekStartDay: MONDAY, graceHours: 48 } as const;
+
+  it("returns the current window plus four future ones, contiguous by construction", () => {
+    const windows = planCycles({ ...base, now: new Date("2026-01-07T15:30:00Z") }, 5);
+
+    expect(windows).toHaveLength(5);
+    expect(windows[0].periodKey).toBe(isoWeekKey(2026, 1, 5));
+    for (let index = 1; index < windows.length; index += 1) {
+      expect(windows[index].startsAt.getTime()).toBe(windows[index - 1].endsAt.getTime());
+      expect(windows[index].periodKey).not.toBe(windows[index - 1].periodKey);
+    }
+  });
+
+  it("keeps windows contiguous across a DST transition", () => {
+    // New York springs forward on 2026-03-08: the week of 03-09 starts at a
+    // different UTC offset than the week before it, yet still abuts it.
+    const windows = planCycles(
+      {
+        now: new Date("2026-03-04T15:30:00Z"),
+        timezone: "America/New_York",
+        weekStartDay: MONDAY,
+        graceHours: 48,
+      },
+      5,
+    );
+
+    expect(windows[0].startsAt.toISOString()).toBe("2026-03-02T05:00:00.000Z"); // EST
+    expect(windows[1].startsAt.toISOString()).toBe("2026-03-09T04:00:00.000Z"); // EDT
+    expect(windows[1].startsAt.getTime()).toBe(windows[0].endsAt.getTime());
+    expect(windows[2].startsAt.getTime()).toBe(windows[1].endsAt.getTime());
+  });
+
+  it("refuses a non-positive count", () => {
+    expect(() => planCycles({ ...base, now: new Date("2026-01-07T15:30:00Z") }, 0)).toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe("effectiveCycleStatus / isReportable (F4, §5.4, §5.9)", () => {
+  const row = {
+    status: "OPEN",
+    startsAt: new Date("2026-01-05T04:00:00.000Z"), // Mon 00:00 Caracas
+    endsAt: new Date("2026-01-12T04:00:00.000Z"),
+    dueAt: new Date("2026-01-14T04:00:00.000Z"), // +48h grace
+  };
+
+  it("labels OPEN inside the window and GRACE after ends_at", () => {
+    expect(effectiveCycleStatus(row, new Date("2026-01-05T04:00:00Z"))).toBe("OPEN");
+    expect(effectiveCycleStatus(row, new Date("2026-01-11T23:59:00Z"))).toBe("OPEN");
+    expect(effectiveCycleStatus(row, new Date("2026-01-12T04:00:00Z"))).toBe("GRACE");
+    expect(effectiveCycleStatus(row, new Date("2026-01-14T03:59:59Z"))).toBe("GRACE");
+  });
+
+  it("A6: Sunday 23:59 in Caracas is still the closing week's cycle", () => {
+    // Sunday 2026-01-11 23:59 Caracas (-04) == 2026-01-12 03:59 UTC.
+    const lastMinute = new Date("2026-01-12T03:59:00Z");
+    const bounds = computeCycleBounds({
+      now: lastMinute,
+      timezone: CARACAS,
+      weekStartDay: MONDAY,
+      graceHours: 48,
+    });
+
+    expect(bounds.periodKey).toBe(isoWeekKey(2026, 1, 5));
+    expect(effectiveCycleStatus({ ...row, ...bounds }, lastMinute)).toBe("OPEN");
+    expect(isReportable({ ...row, ...bounds }, lastMinute)).toBe(true);
+    // One minute later the window has closed and the grace period begins.
+    expect(effectiveCycleStatus({ ...row, ...bounds }, new Date("2026-01-12T04:00:00Z"))).toBe(
+      "GRACE",
+    );
+    expect(isReportable({ ...row, ...bounds }, new Date("2026-01-12T04:00:00Z"))).toBe(true);
+  });
+
+  it("closes at due_at exactly", () => {
+    expect(effectiveCycleStatus(row, new Date("2026-01-14T04:00:00Z"))).toBe("CLOSED");
+    expect(isReportable(row, new Date("2026-01-14T04:00:00Z"))).toBe(false);
+  });
+
+  it("treats a stored CLOSED as terminal, whatever the clock says", () => {
+    const settled = { ...row, status: "CLOSED" };
+    expect(effectiveCycleStatus(settled, new Date("2026-01-06T00:00:00Z"))).toBe("CLOSED");
+    expect(isReportable(settled, new Date("2026-01-06T00:00:00Z"))).toBe(false);
+  });
+
+  it("refuses a report before the window opens", () => {
+    expect(isReportable(row, new Date("2026-01-04T00:00:00Z"))).toBe(false);
+    expect(effectiveCycleStatus(row, new Date("2026-01-04T00:00:00Z"))).toBe("OPEN");
   });
 });
