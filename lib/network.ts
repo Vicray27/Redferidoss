@@ -91,11 +91,22 @@ export interface ListChildrenParams {
   limit?: number;
 }
 
+/** One `custom_field_values` row, labeled for display (jsonb stays raw). */
+export interface CustomValue {
+  label: string;
+  type: string;
+  value: unknown;
+}
+
 export interface NetworkService {
   listChildren(actor: SessionActor, params?: ListChildrenParams): Promise<ChildrenPage>;
   search(actor: SessionActor, query: string, options?: { limit?: number }): Promise<NetworkNode[]>;
   node(actor: SessionActor, targetId: string): Promise<NetworkNodeDetail>;
   breadcrumb(actor: SessionActor, targetId: string): Promise<NetworkNodeRef[]>;
+  /** Live descendants of `targetId` (defaults to the actor's own node). */
+  subtreeSize(actor: SessionActor, targetId?: string): Promise<number>;
+  /** Custom values of a node; staff or self only, same rule as `contact`. */
+  customValues(actor: SessionActor, targetId: string): Promise<CustomValue[]>;
 }
 
 interface RawNodeRow {
@@ -113,6 +124,12 @@ interface RawDetailRow extends RawNodeRow {
   email: string | null;
   phone: string | null;
   sponsorId: string | null;
+}
+
+interface RawCustomValueRow {
+  label: string;
+  type: string;
+  value: unknown;
 }
 
 function toNode(row: RawNodeRow): NetworkNode {
@@ -293,5 +310,45 @@ export function createNetworkService(
     `;
   };
 
-  return { listChildren, search, node, breadcrumb };
+  const subtreeSize: NetworkService["subtreeSize"] = async (actor, targetId) => {
+    const root = targetId ?? actor.userId;
+    await authz.assertCanViewUser(actor, root);
+
+    // `depth > 0` excludes the closure's self row (ancestor = descendant), so
+    // the number is "my network", not "my network plus me".
+    const rows = await db.$queryRaw<{ total: unknown }[]>`
+      /* @net:subtree */
+      SELECT count(*)::int AS total
+      FROM user_closure c
+      JOIN users u ON u.id = c.descendant_id AND u.deleted_at IS NULL
+      WHERE c.ancestor_id = ${root}::uuid
+        AND c.depth > 0
+    `;
+
+    return Number(rows[0]?.total ?? 0);
+  };
+
+  const customValues: NetworkService["customValues"] = async (actor, targetId) => {
+    await authz.assertCanViewUser(actor, targetId);
+
+    // Same disclosure rule as `contact`: custom values are profile data and a
+    // MEMBER browsing a downline node sees identity and tree position, not the
+    // downline's answers to the sponsor's questions.
+    if (!isStaffActor(actor) && actor.userId !== targetId) return [];
+
+    const rows = await db.$queryRaw<RawCustomValueRow[]>`
+      /* @net:custom-values */
+      SELECT d.label, d.type::text AS type, v.value
+      FROM custom_field_values v
+      JOIN custom_fields d ON d.id = v.field_id
+      WHERE v.entity_id = ${targetId}::uuid
+        AND d.entity = 'USER'
+        AND d.is_active = TRUE
+      ORDER BY d.sort_order ASC, d.label ASC
+    `;
+
+    return rows.map((row) => ({ label: row.label, type: row.type, value: row.value }));
+  };
+
+  return { listChildren, search, node, breadcrumb, subtreeSize, customValues };
 }

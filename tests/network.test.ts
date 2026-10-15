@@ -343,6 +343,77 @@ describe("breadcrumb — same code path, the scope fragment decides", () => {
 });
 
 // ---------------------------------------------------------------------------
+// subtreeSize and customValues — the detail-page extras
+// ---------------------------------------------------------------------------
+
+describe("subtreeSize", () => {
+  it("counts descendants of the actor's own node", async () => {
+    const fake = new NetFake().on("@net:subtree", () => [{ total: BigInt(7) }]);
+    const { network } = makeService(fake);
+
+    expect(await network.subtreeSize(MEMBER)).toBe(7);
+    expect(fake.callsFor("@net:subtree")[0].values).toContain("member-1");
+  });
+
+  it("returns 0 rather than NaN for a missing row", async () => {
+    const fake = new NetFake().on("@net:subtree", () => []);
+    const { network } = makeService(fake);
+
+    expect(await network.subtreeSize(MEMBER)).toBe(0);
+  });
+
+  it("refuses an explicit target outside the member's subtree before counting", async () => {
+    const fake = new NetFake().on("@net:subtree", () => [{ total: 1 }]);
+    fake.closureRows = [];
+    const { network } = makeService(fake);
+
+    await expect(network.subtreeSize(MEMBER, "stranger-9")).rejects.toBeInstanceOf(ForbiddenError);
+    expect(fake.callsFor("@net:subtree")).toHaveLength(0);
+  });
+});
+
+describe("customValues — the same disclosure rule as contact", () => {
+  const ROWS = [
+    { label: "Ciudad de nacimiento", type: "TEXT", value: "Asunción" },
+    { label: "Acepta términos", type: "BOOL", value: true },
+  ];
+
+  it("returns values for the member's own row", async () => {
+    const fake = new NetFake().on("@net:custom-values", () => ROWS);
+    const { network } = makeService(fake);
+
+    const values = await network.customValues(MEMBER, "member-1");
+    expect(values).toEqual(ROWS);
+    expect(fake.callsFor("@net:custom-values")[0].values).toContain("member-1");
+  });
+
+  it("returns values for staff (same rule as contact data)", async () => {
+    const fake = new NetFake().on("@net:custom-values", () => ROWS);
+    const { network } = makeService(fake);
+
+    expect(await network.customValues(ROOT, "child-1")).toEqual(ROWS);
+  });
+
+  it("returns [] for a member browsing a downline node, without querying", async () => {
+    const fake = new NetFake();
+    fake.closureRows = [{ depth: 1 }];
+    const { network } = makeService(fake);
+
+    expect(await network.customValues(MEMBER, "child-1")).toEqual([]);
+    expect(fake.callsFor("@net:custom-values")).toHaveLength(0);
+  });
+
+  it("refuses ids outside the member's subtree before deciding on disclosure", async () => {
+    const fake = new NetFake().on("@net:custom-values", () => ROWS);
+    fake.closureRows = [];
+    const { network } = makeService(fake);
+
+    await expect(network.customValues(MEMBER, "stranger-9")).rejects.toBeInstanceOf(ForbiddenError);
+    expect(fake.callsFor("@net:custom-values")).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The invariant: no read without the fragment
 // ---------------------------------------------------------------------------
 
