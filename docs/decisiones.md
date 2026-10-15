@@ -323,3 +323,163 @@ resuelve hacia lo más configurable (spec §18.7).
   adivinanza de una credencial, que este diseño frena. Un límite combinado
   (cuenta + IP) es el siguiente paso natural si F5 expone un endpoint público
   de registro.
+
+## F3 - la red (invitaciones, registro, API y UI)
+
+### D19 - Códigos públicos aleatorios para los miembros nuevos
+- Contexto: D11 deriva el `public_code` del root de su correo. Para los
+  miembros nuevos eso sería un fingerprint reversible del correo en un
+  identificador que se comparte en links públicos.
+- Decisión: `randomPublicCode()` genera 8 caracteres del alfabeto Crockford
+  (sin I, L, O, U) con `randomBytes`, y se reintenta hasta 5 veces ante
+  colisión (`uq_users_public_code`). El generador es inyectable para tests.
+- Consecuencias: dos formatos conviven (el código del root derivado y los
+  demás aleatorios); el resolver de invitaciones no distingue el origen, sólo
+  el formato (`looksLikePublicCode`).
+
+### D20 - Link permanente (sin fila) vs invitación de un solo uso (con fila)
+- Contexto: §8.2 describe ambos, y R3 exige contar "invitaciones pendientes"
+  contra el cupo.
+- Decisión: el link `/r/{public_code}` no crea filas (el código ya existe);
+  `/invite/{token}` inserta una fila en `invitations` con `uses`/`max_uses`.
+  `quotaFor(userId, {excludeInvitationId})` permite que el registro consuma su
+  propia invitación sin que ésta todavía cuente como pendiente: cupo
+  aritméticamente correcto (hijo +1, pendiente −1). Todas las lecturas de cupo
+  usan un CTE con orden de parámetros fijo.
+
+### D21 - El hash de contraseña corre FUERA de la transacción
+- Contexto: Argon2id tarda cientos de milisegundos; la transacción toma
+  `FOR UPDATE` sobre el patrocinador (la decisión A3: dos registros
+  simultáneos del último cupo, uno gana).
+- Decisión: validación barata, hashing y generación de código público ocurren
+  antes de `$transaction`; dentro sólo van las relecturas autoritativas y los
+  INSERT. El lock no se sostiene mientras se calcula el hash.
+- Consecuencias: el hash puede gastarse por un intento que luego falla por
+  cupo; es el precio aceptable de no serializar el registro tras Argon2.
+
+### D22 - Doble resolución de la invitación: antes y después del lock
+- Decisión: `resolveInvite` se ejecuta una vez para identificar al
+  patrocinador (a quién bloquear) y otra vez dentro de la transacción sobre la
+  fila ya bloqueada (estado, expiración, cupo, R4 profundidad). La segunda es
+  la autoritativa; la primera es sólo descubrimiento.
+- Consecuencias: expiración y `revoked_at` se re-evalúan bajo lock; el envío
+  de `emailTarget` no puede ser burlado por una carrera entre resolve y submit.
+
+### D23 - `email_target`: la dirigida sólo se registra con ese correo
+- Decisión: comparación case-insensitive; un correo distinto produce el mismo
+  `RegistrationConflictError` genérico que un correo duplicado — el link
+  público no puede usarse para un oráculo de direcciones.
+- Consecuencias: el payload público de `/api/public/invite/[slug]` NO incluye
+  `emailTarget` (menor divulgación); la coincidencia se explica en la UI de
+  error sólo de forma genérica.
+
+### D24 - Estado del nuevo usuario: ACTIVE o PENDING según settings
+- Decisión: `ACTIVE` sólo si `referral.auto_approve_registration` está en
+  true Y `referral.require_email_verification` en false (D7 no hay proveedor
+  de correo: el seed lo deja en false). En cualquier otro caso `PENDING`.
+- Consecuencias: el registro con PENDING igual emite sesión — la cuenta puede
+  entrar a ver su estado; las guardas por rol deciden qué ve.
+
+### D25 - Campos personalizados FILE se omiten por completo en el registro
+- Contexto: §8.3 pide renderizar "todos" los custom_fields de registro, pero
+  la subida de comprobantes llega con pagos (S3, F4).
+- Decisión: FILE no se renderiza en el formulario y no puede ser obligatorio
+  en el registro (`collectCustomValues` lo salta ANTES de evaluar `empty`); su
+  valor se completa después. Sin esta excepción, un FILE obligatorio haría
+  irregistrable a cualquier invitado.
+
+### D26 - DECIMAL como string exacto y DATE con calendario estricto
+- Decisión: DECIMAL se valida con `Number` pero se ALMACENA el string
+  original (`NUMERIC` no debe pasar por float); DATE exige el formato
+  AAAA-MM-DD y un round-trip ISO (`Date.parse("2026-02-31")` no devuelve NaN:
+  rueda al 3 de marzo, así que el parse por sí solo no valida).
+
+### D27 - La obligación del ciclo se crea sólo si existe un ciclo OPEN
+- Decisión: al registrar, si hay un ciclo OPEN se inserta `cycle_obligations`
+  con `expected_amount` = `payments.expected_amount`; si no hay ciclo, no se
+  inventa una obligación (el siguiente ciclo lo tomará al recalcular).
+- Consecuencias: `obligationCreated: false` viaja en el resultado; la UI de
+  pagos (F4) no puede asumir que todo usuario del ciclo actual ya la tiene.
+
+### D28 - Códigos de error y anti-enumeración en el registro
+- Decisión: `INVITE_INVALID` (404, un único mensaje genérico; el motivo real
+  — vencida/revocada/inexistente — sólo va al log), `REFERRAL_LIMIT_REACHED`
+  (409, con el mensaje de "sin cupos"), `DEPTH_LIMIT_REACHED` (409),
+  `REGISTRATION_CONFLICT` (409, genérico: correo duplicado y email_target no
+  coincidente son indistinguibles).
+- Consecuencias: la página pública de invitación tampoco distingue "no
+  existe" de "revocada": mismo texto para ambas.
+
+### D29 - Lecturas autenticadas como route handlers; mutaciones como Server Actions
+- Decisión: `/api/network/{children,search,nodes/[id]}` son GET con
+  `requireApiSession` (401 en envelope JSON, nunca redirect — un fetch no debe
+  recibir HTML de login); crear/revocar invitación son Server Actions (Next
+  verifica Origin/Host = CSRF gratis, como en F2); el registro público es un
+  POST de route handler porque su cliente aún no tiene sesión, con
+  `assertSameOrigin` explícito.
+- Consecuencias: dos caminos de mutación conviven y la razón de cada uno está
+  escrita en el archivo; mover una mutación de un mundo al otro es una
+  decisión, no un detalle.
+
+### D30 - Throttle en memoria para registro e invitación pública
+- Contexto: el throttle de login (D18) es persistente por correo; el registro
+  necesita un tope por IP que corte abuso scripted sin otra tabla.
+- Decisión: `lib/throttle.ts` (ventana fija, contador por clave, reloj
+  inyectable): 20 registros/hora/IP y 60 resoluciones/10 min/IP. Es
+  process-local A PROPÓSITO, declarado en el archivo: este despliegue es un
+  contenedor único; escalar horizontalmente exige un store compartido.
+- Consecuencias: `clientIp` lee `x-forwarded-for` (primer hop) y es evadible
+  por clientes directos; su trabajo es desalentar farmeos, no autenticar.
+
+### D31 - Alias explícito del scope, y breadcrumb relativo para miembros
+- Decisión: `scopeFilter(actor, {alias})` es obligatorio en cada consulta —
+  `u` para children/search/node, `a` para breadcrumb (filtra ANCESTROS). Para
+  un MEMBER el breadcrumb queda relativo a su subárbol (él → … → objetivo);
+  para staff es la cadena completa raíz → objetivo. Mismo código, la decisión
+  la toma el fragmento.
+- Consecuencias: un test de invariante recorre los cuatro markers y falla si
+  alguno viaja sin fragmento no vacío para un miembro.
+
+### D32 - Qué revela la ficha de una persona
+- Decisión: email/teléfono y campos personalizados sólo para staff o la
+  propia persona (contact queda `null` y customValues `[]` — la página no
+  decide, el servicio sí). El patrocinador se lee SIN filtro de scope: es el
+  patrocinador de una fila ya autorizada, y para la propia fila es tu
+  referente (por diseño). El "link de red" (`/r/{code}`) se muestra porque es
+  público por naturaleza.
+- Consecuencias: la excepción del sponsor es deliberada y está comentada en
+  lib/network.ts; cualquier otro JOIN sin scope sería un bug.
+
+### D33 - El portal F3: lo que muestra y lo que posterga
+- Decisión: `/portal` (Inicio) muestra cupos disponibles, tamaño de la red y
+  referidos directos; el estado de pago semanal de §8.4 queda para F4 con un
+  placeholder explícito (mejor un cartel honesto que un número inventado).
+  `/portal/network` trae árbol lazy + búsqueda; `/portal/network/[id]` la ficha
+  con subárbol y breadcrumb; `/portal/invitations` el link permanente con QR,
+  la creación de un solo uso, la lista de pendientes y revocar.
+- Consecuencias: la vista Tabla con exportación (Vista tabla §8.4) y el botón
+  "enviar por email" quedan anotados como pendientes de F5; el chip de estado
+  de ciclo del árbol llega con los pagos.
+
+### D34 - QR y links absolutos desde el navegador, sin APP_PUBLIC_URL
+- Decisión: `components/link-box.tsx` compone la URL absoluta con
+  `window.location.origin` tras el mount y `qrcode` genera data URLs en el
+  cliente. El servidor nunca necesita saber su propio origen público.
+- Consecuencias: el QR y el botón copiar siempre coinciden con el origen real
+  (dev incluido); si en el futuro un email necesita links absolutos
+  server-side, hará falta `APP_PUBLIC_URL` y ese es otro caso.
+
+### D35 - Copy en español inline; next-intl sigue pendiente
+- Contexto: §12 pide i18n vía next-intl con messages/es.json.
+- Decisión: F3 mantiene la convención de F2 (copy español inline en los
+  componentes); la capa i18n no se inventa a mitad de camino con un catálogo
+  de dos frases. Cuando entre, entra una vez, sobre todos los textos.
+- Consecuencias: deuda declarada, no silenciosa.
+
+### D36 - El registro público vive fuera del matcher del middleware
+- Decisión: el matcher sigue siendo `/admin`, `/portal` y `/login`: `/r`,
+  `/invite` y `/api/public/*` deben ser alcanzables sin sesión, y el registro
+  se protege con throttle + same-origin (D29/D30), no con una redirección.
+- Consecuencias: un error futuro en el matcher degrada a "un redirect de más",
+  nunca a "acceso anónimo a /admin" (la autoridad sigue siendo
+  `requireSession` en cada página).

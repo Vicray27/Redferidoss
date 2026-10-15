@@ -265,3 +265,63 @@ SELECT migration_name, finished_at IS NOT NULL AS ok FROM _prisma_migrations;
 | `app/login/` | Formulario (react-hook-form + Zod) y su página. |
 | `app/admin/`, `app/portal/` | Zonas protegidas; identity visible, dashboard en F5. |
 | `scripts/set-password.ts` | `pnpm auth:set-password`, el único reset de contraseña posible. |
+
+## La red (F3)
+
+Registro por invitación, panel de invitaciones y lecturas de red con recorte
+por scope (§7.1). Los textos entre paréntesis son las secciones del documento
+de referencia.
+
+### Endpoints
+
+| Método y ruta | Qué hace | Protección |
+|---|---|---|
+| `POST /api/auth/register` | Registro vía invitación (§8.3): valida, hashea fuera de la transacción, reválida bajo `FOR UPDATE`, crea usuario + obligación + auditoría, emite sesión. | `assertSameOrigin` + throttle por IP (20/h) |
+| `GET /api/public/invite/[slug]` | Resuelve `/r/{code}` o `/invite/{token}`: patrocinador, cupos, campos del formulario. Sin `emailTarget`. | throttle por IP (60/10 min) |
+| `GET /api/network/children` | Hijos directos paginados por keyset; `parentId` default = uno mismo. | `requireApiSession` + `assertCanViewUser` + `scopeFilter` |
+| `GET /api/network/search` | Búsqueda por nombre o código dentro del alcance del actor. | ídem |
+| `GET /api/network/nodes/[id]` | Ficha + breadcrumb; contacto y campos personalizados sólo staff o la propia persona. | ídem |
+
+Todos responden el envelope de §10: `{ok:true,data}` o
+`{ok:false,error:{code,message,details?}}`.
+
+### Páginas y componentes
+
+| Ruta / archivo | Qué hace |
+|---|---|
+| `/r/[code]`, `/invite/[token]` | Página pública de registro; invitación inválida o sin cupo muestra un error explícito, no un formulario. |
+| `components/register/register-form.tsx` | Formulario: base con `registerCoreSchema` (misma definición que el servidor) + campos dinámicos. |
+| `components/dynamic-form/` | `build-zod-schema.ts` (espejo cliente de las reglas del servidor) y `field-renderer.tsx`; los FILE se omiten (§8.3, D25). |
+| `/portal` | Inicio: cupos, tamaño de red, referidos directos; pagos llegan con F4 (D33). |
+| `/portal/network`, `/portal/network/[id]` | Árbol perezoso con búsqueda y ficha con subárbol, breadcrumb y campos personalizados. |
+| `/portal/invitations` | Link permanente con QR, invitación de un solo uso, pendientes y revocar (Server Actions). |
+| `components/network/network-tree.tsx` | Árbol colapsable; cada expansión es `GET /api/network/children`. |
+| `components/link-box.tsx`, `components/qr-code.tsx` | Link absoluto + copiar + QR generado en el navegador (D34). |
+
+### Librerías de la fase
+
+| Archivo | Qué hace |
+|---|---|
+| `lib/invitations.ts` | Resolver ambos tipos de link, cupo (R3), emitir/revocar/consumir tokens; `@inv:*`. |
+| `lib/registration.ts` | `registerUser()` con la carrera A3, R3/R4, campos dinámicos y auditoría; `@reg:*`. |
+| `lib/registration-deps.ts` | Cableado real + los dos throttles de la fase. |
+| `lib/invitations-actions.ts` | Server Actions de crear/revocar invitación (CSRF vía Next). |
+| `lib/network.ts` | `listChildren`/`search`/`node`/`breadcrumb`/`subtreeSize`/`customValues`, todos con scope; `@net:*`. |
+| `lib/api.ts` | `withApi`, `okResponse`, `parseJsonBody`, `parseQuery`, `assertSameOrigin`, `clientIp`. |
+| `lib/throttle.ts` | Ventana fija por clave, reloj inyectable (D30). |
+| `lib/register-schema.ts` | Contrato Zod del formulario, compartido cliente/servidor. |
+
+### Verificación local
+
+```sh
+pnpm test        # 385+ tests de unidad, sin base de datos
+pnpm typecheck
+pnpm db:check:drift
+```
+
+Los tests de F3 cubren: cupo y consumo de invitaciones (con curas de reloj),
+el espejo cliente de las reglas dinámicas, los helpers de API, y un invariante
+que falla si alguna lectura de red viaja sin fragmento de scope para un
+miembro. Las mitades de integración contra Postgres real quedan marcadas para
+el servidor (igual que en fases anteriores). Las decisiones D19–D36 están en
+`docs/decisiones.md`.
