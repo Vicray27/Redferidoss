@@ -582,3 +582,28 @@ resuelve hacia lo más configurable (spec §18.7).
   archivos grandes; el endpoint va con throttle por usuario (30 cada 10 min).
   El flujo cliente es en dos pasos (subir → Server Action con `fileId`, D29)
   porque las Server Actions de Next limitan el cuerpo a 1 MB.
+
+### D43 - Ventana del reporte semanal y composición de referencia/comprobante
+- Contexto: §6 define `payments.require_reference` ("obligatoria según el
+  método elegido") y `payments.require_proof` ("obligatorio en cada reporte"),
+  mientras §5.6 da a cada método sus propios `requires_reference`/
+  `requires_proof`. Faltaba decidir cómo se combinan los dos niveles y hasta
+  cuándo se puede reportar (§8.4: un reporte por semana, con "corregir y
+  reenviar" cuando el reporte está REJECTED).
+- Decisión: la referencia exige AMBOS niveles (el setting global y el flag del
+  método; apagar cualquiera de los dos la relaja, coherente con "según el
+  método elegido"); el comprobante exige CUALQUIERA (un método puede pedirlo
+  en solitario y el setting global lo impone a todos, coherente con
+  "obligatorio en cada reporte"). La ventana de reporte es el ciclo que
+  contiene a `now()` en `[starts_at, due_at)` (OPEN o GRACE): no hay reportes
+  retroactivos después de `due_at`, y un reporte REJECTED sólo se puede
+  reemplazar mientras esa ventana siga abierta. `paid_at` nunca puede ser
+  futuro ni más viejo que `payments.allow_backdated_days` (días de calendario
+  UTC completos).
+- Consecuencias: un rechazo posterior a `due_at` ya no es corregible y el
+  ciclo cuenta como incumplido (la UI de F4a ocultará "corregir y reenviar"
+  cuando el ciclo cerró); el índice parcial `uq_report_user_cycle` (D4) queda
+  como respaldo de "un reporte vivo por ciclo" y su violación se mapea a 409
+  `REPORT_ALREADY_EXISTS`. El `code` de la tabla configurable `payment_methods`
+  se proyecta al enum SQL `payment_method` por vocabulario (§5.5) con `OTHER`
+  como fallback para métodos propios del admin.

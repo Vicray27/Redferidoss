@@ -1,0 +1,422 @@
+// =============================================================================
+// lib/payments.ts — §5.5 payment reports: the weekly offering.
+//
+// One report per person per cycle — the SQL partial unique index
+// uq_report_user_cycle (D4) enforces it while max_reports_per_cycle = 1 —
+// reviewed by ADMIN/ROOT, and an APPROVED report is what fulfils the person's
+// cycle_obligations row. Every business rule comes from settings
+// (amount_mode, expected_amount, currency, allow_backdated_days, auto_approve,
+// require_proof, require_reference); "one report per week" is a setting, not a
+// constant.
+//
+// D43 records the composed rules:
+//   * reference is required when BOTH payments.require_reference and the
+//     chosen method's flag are true (§6: "según el método elegido");
+//   * proof is required when EITHER payments.require_proof or the method flag
+//     is true (§6: "obligatorio en cada reporte");
+//   * the report window is the cycle currently inside [starts_at, due_at):
+//     no retroactive reports once due_at passed, and a REJECTED report may be
+//     replaced only while that window is open.
+//
+// The `method` column is the payment_method ENUM (fixed vocabulary, SQL-only):
+// the admin-configurable code travels in `method_id` and is projected into the
+// enum through the §5.5 vocabulary, falling back to 'OTHER' for custom methods
+// so the historical text column never rejects an admin-defined method.
+//
+// Errors are AppError subclasses: 400 ValidationError with a field-keyed
+// `details` map, 403 ForbiddenError, 404 NotFoundError, 409 ConflictError.
+// =============================================================================
+
+import { ForbiddenError } from "./authz";
+import { MS_PER_DAY } from "./cycles";
+import { ConflictError, NotFoundError, ValidationError } from "./errors";
+import { compareAmounts, formatAmount, parseAmount } from "./money";
+import type { SettingsReader } from "./settings";
+
+/** Prisma-compatible raw database surface (a fake implements it in tests). */
+export interface PaymentsDb {
+  $queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T>;
+  $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<number>;
+}
+
+/** Settings subset the service depends on — injectable in tests. */
+export type PaymentsSettings = Pick<SettingsReader, "getOrThrow">;
+
+export type ReportStatus = "PENDING" | "APPROVED" | "REJECTED";
+export type ReviewDecision = "APPROVED" | "REJECTED";
+export type AmountMode = "FIXED" | "MINIMUM" | "FREE";
+
+export interface PaymentsActor {
+  id: string;
+  role: string;
+}
+
+export interface CreateReportInput {
+  amount: string | number;
+  methodId: string;
+  reference?: string | null;
+  /** Date, or an ISO string from a form submission. */
+  paidAt: Date | string;
+  note?: string | null;
+  proofKey?: string | null;
+}
+
+export interface CreatedReport {
+  id: string;
+  status: ReportStatus;
+  cycleId: string;
+  periodKey: string;
+  reportedAt: Date;
+}
+
+export interface ReviewedReport {
+  id: string;
+  status: ReviewDecision;
+  userId: string;
+  cycleId: string;
+}
+
+export interface MyReportRow {
+  id: string;
+  amount: string;
+  currency: string;
+  method: string;
+  status: ReportStatus;
+  paidAt: Date;
+  reportedAt: Date;
+  reviewNote: string | null;
+  proofKey: string | null;
+  cycleId: string;
+  periodKey: string;
+}
+
+export interface ReviewQueueRow {
+  id: string;
+  amount: string;
+  currency: string;
+  method: string;
+  paidAt: Date;
+  reportedAt: Date;
+  note: string | null;
+  proofKey: string | null;
+  reference: string | null;
+  userId: string;
+  fullName: string;
+  publicCode: string;
+  cycleId: string;
+  periodKey: string;
+}
+
+export interface PaymentsService {
+  createReport(actor: PaymentsActor, input: CreateReportInput): Promise<CreatedReport>;
+  reviewReport(actor: PaymentsActor, reportId: string, decision: ReviewDecision, note?: string | null): Promise<ReviewedReport>;
+  listMyReports(actor: PaymentsActor, options?: { limit?: number }): Promise<MyReportRow[]>;
+  listReviewQueue(options?: { limit?: number; cycleId?: string }): Promise<ReviewQueueRow[]>;
+}
+
+export interface PaymentsServiceOptions {
+  now?: () => Date;
+}
+
+/** The six codes of the SQL `payment_method` enum (§5.5 comment in 0001_init). */
+const METHOD_ENUM_CODES = ["TRANSFER", "MOBILE", "ZELLE", "CASH", "CRYPTO"] as const;
+
+const DEFAULT_LIST_LIMIT = 25;
+const MAX_LIST_LIMIT = 100;
+
+const SETTING_KEYS = {
+  amountMode: "payments.amount_mode",
+  expectedAmount: "payments.expected_amount",
+  currency: "payments.currency",
+  allowBackdatedDays: "payments.allow_backdated_days",
+  autoApprove: "payments.auto_approve",
+  requireProof: "payments.require_proof",
+  requireReference: "payments.require_reference",
+} as const;
+
+/** Unique violation in the pg driver (`23505`) or Prisma (`P2002`). */
+export function isUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; meta?: { code?: unknown } };
+  return candidate.code === "23505" || candidate.code === "P2002" || candidate.meta?.code === "23505";
+}
+
+interface CycleRow {
+  id: string;
+  period_key: string;
+  starts_at: Date;
+  ends_at: Date;
+  due_at: Date;
+}
+
+interface MethodRow {
+  id: string;
+  code: string;
+  requires_reference: boolean;
+  requires_proof: boolean;
+}
+
+interface AuthorSnapshotRow {
+  path: string;
+  depth: number;
+}
+
+export function createPaymentsService(
+  db: PaymentsDb,
+  settings: PaymentsSettings,
+  options: PaymentsServiceOptions = {},
+): PaymentsService {
+  const now = options.now ?? (() => new Date());
+
+  const clampLimit = (raw: number | undefined): number => {
+    if (raw === undefined || !Number.isFinite(raw)) return DEFAULT_LIST_LIMIT;
+    return Math.min(Math.max(1, Math.trunc(raw)), MAX_LIST_LIMIT);
+  };
+
+  const fulfilObligation = async (cycleId: string, userId: string, reportId: string): Promise<void> => {
+    await db.$executeRaw`
+      /* @pay:fulfil-obligation */
+      UPDATE cycle_obligations SET status = 'FULFILLED', fulfilled_report_id = ${reportId}::uuid
+      WHERE cycle_id = ${cycleId}::uuid AND user_id = ${userId}::uuid AND status <> 'FULFILLED'
+    `;
+  };
+
+  const notifyReview = async (userId: string, input: { reportId: string; cycleId: string; status: ReportStatus; note: string | null }): Promise<void> => {
+    const approved = input.status === "APPROVED";
+    const title = approved ? "Aporte aprobado" : "Aporte rechazado";
+    const body = approved ? "Tu aporte de la semana fue aprobado." : `Tu aporte fue rechazado: ${input.note ?? "revisa el detalle."}`;
+    await db.$executeRaw`
+      /* @pay:notify-review */
+      INSERT INTO notifications (user_id, type, title, body, data)
+      VALUES (${userId}::uuid, 'payment.reviewed', ${title}, ${body}, ${JSON.stringify({ reportId: input.reportId, cycleId: input.cycleId, status: input.status })}::jsonb)
+    `;
+  };
+
+  return {
+    async createReport(actor, input) {
+      const [amountMode, expectedRaw, currency, backdatedDays, autoApprove, globalProof, globalReference] = await Promise.all([
+        settings.getOrThrow<AmountMode>(SETTING_KEYS.amountMode),
+        settings.getOrThrow<unknown>(SETTING_KEYS.expectedAmount),
+        settings.getOrThrow<string>(SETTING_KEYS.currency),
+        settings.getOrThrow<number>(SETTING_KEYS.allowBackdatedDays),
+        settings.getOrThrow<boolean>(SETTING_KEYS.autoApprove),
+        settings.getOrThrow<boolean>(SETTING_KEYS.requireProof),
+        settings.getOrThrow<boolean>(SETTING_KEYS.requireReference),
+      ]);
+
+      // --- amount: exact DECIMAL arithmetic, mode enforced from settings ------
+      let amountCents: bigint;
+      try {
+        amountCents = parseAmount(input.amount);
+      } catch {
+        throw new ValidationError("El monto no es válido.", { amount: "Usa un número con hasta 2 decimales." });
+      }
+      if (amountCents <= 0n) {
+        throw new ValidationError("El monto debe ser mayor que cero.", { amount: "Usa un número con hasta 2 decimales." });
+      }
+      const expectedCents = parseAmount(expectedRaw);
+      const comparison = compareAmounts(amountCents, expectedCents);
+      if (amountMode === "FIXED" && comparison !== 0) {
+        throw new ValidationError(`El monto debe ser exactamente ${formatAmount(expectedCents)}.`, { amount: "El monto no coincide con el esperado." });
+      }
+      if (amountMode === "MINIMUM" && comparison < 0) {
+        throw new ValidationError(`El monto debe ser al menos ${formatAmount(expectedCents)}.`, { amount: "El monto está por debajo del mínimo." });
+      }
+
+      // --- paid_at: never in the future, never older than allow_backdated_days
+      const paidAt = input.paidAt instanceof Date ? input.paidAt : new Date(input.paidAt);
+      if (Number.isNaN(paidAt.getTime())) {
+        throw new ValidationError("La fecha de pago no es válida.", { paidAt: "Indica una fecha válida." });
+      }
+      const nowDate = now();
+      if (paidAt.getTime() > nowDate.getTime()) {
+        throw new ValidationError("La fecha de pago no puede estar en el futuro.", { paidAt: "La fecha de pago no puede estar en el futuro." });
+      }
+      const startOfTodayUtc = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate());
+      const oldestAllowed = startOfTodayUtc - Math.max(0, Math.trunc(backdatedDays)) * MS_PER_DAY;
+      if (paidAt.getTime() < oldestAllowed) {
+        throw new ValidationError(`La fecha de pago no puede ser anterior a ${Math.trunc(backdatedDays)} días.`, { paidAt: "La fecha de pago es demasiado antigua." });
+      }
+
+      // --- report window: the cycle currently inside [starts_at, due_at) ------
+      const cycles = await db.$queryRaw<CycleRow[]>`
+        /* @pay:cycle-window */
+        SELECT id, period_key, starts_at, ends_at, due_at
+        FROM payment_cycles
+        WHERE starts_at <= ${nowDate} AND ${nowDate} < due_at
+        ORDER BY starts_at DESC
+        LIMIT 1
+      `;
+      const cycle = cycles[0];
+      if (!cycle) {
+        throw new ConflictError("No hay una semana abierta para reportar. Intenta cuando comience el próximo ciclo.", "NO_REPORT_WINDOW");
+      }
+
+      // --- method: must exist and be active ------------------------------------
+      const methods = await db.$queryRaw<MethodRow[]>`
+        /* @pay:method */
+        SELECT id, code, requires_reference, requires_proof
+        FROM payment_methods
+        WHERE id = ${input.methodId}::uuid AND is_active
+      `;
+      const method = methods[0];
+      if (!method) {
+        throw new ValidationError("El método de pago no existe o ya no está disponible.", { methodId: "Elige un método de pago activo." });
+      }
+
+      // --- D43: reference = global AND method; proof = global OR method -------
+      const reference = input.reference?.trim() ? input.reference.trim() : null;
+      if (globalReference && method.requires_reference && reference === null) {
+        throw new ValidationError("La referencia de pago es obligatoria para este método.", { reference: "Ingresa el número de referencia o hash de la transacción." });
+      }
+      const proofKey = input.proofKey?.trim() ? input.proofKey.trim() : null;
+      if ((globalProof || method.requires_proof) && proofKey === null) {
+        throw new ValidationError("El comprobante es obligatorio para este método.", { proof: "Adjunta la imagen o el PDF del comprobante." });
+      }
+      if (proofKey !== null) {
+        const owned = await db.$queryRaw<Array<{ owner_id: string | null }>>`
+          /* @pay:proof-owner */
+          SELECT owner_id FROM files WHERE key = ${proofKey}
+        `;
+        if (!owned[0] || owned[0].owner_id !== actor.id) {
+          throw new ValidationError("El comprobante adjunto no es válido.", { proof: "Vuelve a subir el archivo." });
+        }
+      }
+
+      // --- one report per cycle (D4), with the index as the backstop ----------
+      const existing = await db.$queryRaw<Array<{ id: string }>>`
+        /* @pay:existing-report */
+        SELECT id FROM payment_reports
+        WHERE user_id = ${actor.id}::uuid AND cycle_id = ${cycle.id}::uuid AND status <> 'REJECTED'
+        LIMIT 1
+      `;
+      if (existing[0]) {
+        throw new ConflictError("Ya registraste un aporte para esta semana.", "REPORT_ALREADY_EXISTS");
+      }
+
+      const authors = await db.$queryRaw<AuthorSnapshotRow[]>`
+        /* @pay:author-snapshot */
+        SELECT path::text AS path, depth FROM users WHERE id = ${actor.id}::uuid
+      `;
+      const author = authors[0];
+      if (!author) {
+        throw new NotFoundError("No se encontró tu usuario.");
+      }
+
+      const note = input.note?.trim() ? input.note.trim() : null;
+      const status: ReportStatus = autoApprove ? "APPROVED" : "PENDING";
+      const methodKind = METHOD_ENUM_CODES.includes(method.code as (typeof METHOD_ENUM_CODES)[number]) ? method.code : "OTHER";
+
+      let inserted: Array<{ id: string; reported_at: Date }>;
+      try {
+        inserted = await db.$queryRaw<Array<{ id: string; reported_at: Date }>>`
+          /* @pay:insert-report */
+          INSERT INTO payment_reports
+            (user_id, cycle_id, amount, currency, method, method_id, reference, paid_at, note, proof_key, status, snapshot_depth, snapshot_path)
+          VALUES
+            (${actor.id}::uuid, ${cycle.id}::uuid, ${formatAmount(amountCents)}::numeric(14,2), ${currency}, ${methodKind}::payment_method,
+             ${method.id}::uuid, ${reference}, ${paidAt}, ${note}, ${proofKey}, ${status}::report_status, ${author.depth}, ${author.path}::ltree)
+          RETURNING id, reported_at
+        `;
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw new ConflictError("Ya registraste un aporte para esta semana.", "REPORT_ALREADY_EXISTS");
+        }
+        throw error;
+      }
+      const report = inserted[0];
+      if (!report) {
+        // INSERT ... RETURNING always returns a row; a missing one is a bug.
+        throw new Error("payment_reports INSERT ... RETURNING returned no row");
+      }
+
+      // Auto-approval (payments.auto_approve) fulfils the obligation at once,
+      // exactly as a manual APPROVED review would.
+      if (status === "APPROVED") {
+        await fulfilObligation(cycle.id, actor.id, report.id);
+        await notifyReview(actor.id, { reportId: report.id, cycleId: cycle.id, status, note: null });
+      }
+
+      return { id: report.id, status, cycleId: cycle.id, periodKey: cycle.period_key, reportedAt: report.reported_at };
+    },
+
+    async reviewReport(actor, reportId, decision, note) {
+      if (actor.role !== "ROOT" && actor.role !== "ADMIN") {
+        throw new ForbiddenError("Solo la administración puede revisar aportes.");
+      }
+      if (decision !== "APPROVED" && decision !== "REJECTED") {
+        throw new ValidationError("La decisión no es válida.", { decision: "Aprueba o rechaza el reporte." });
+      }
+
+      const reports = await db.$queryRaw<Array<{ id: string; user_id: string; cycle_id: string; status: ReportStatus }>>`
+        /* @pay:report-for-review */
+        SELECT id, user_id, cycle_id, status FROM payment_reports WHERE id = ${reportId}::uuid
+      `;
+      const report = reports[0];
+      if (!report) {
+        throw new NotFoundError("No se encontró el reporte.");
+      }
+      if (report.status !== "PENDING") {
+        throw new ConflictError("Este reporte ya fue revisado.", "REPORT_ALREADY_REVIEWED");
+      }
+
+      const reviewNote = note?.trim() ? note.trim() : null;
+      if (decision === "REJECTED" && reviewNote === null) {
+        throw new ValidationError("Indica el motivo del rechazo.", { reviewNote: "Escribe el motivo para que la persona pueda corregir." });
+      }
+
+      const updated = await db.$queryRaw<Array<{ id: string; user_id: string; cycle_id: string }>>`
+        /* @pay:review-update */
+        UPDATE payment_reports
+        SET status = ${decision}::report_status, reviewed_by = ${actor.id}::uuid, reviewed_at = now(), review_note = ${reviewNote}
+        WHERE id = ${reportId}::uuid AND status = 'PENDING'
+        RETURNING id, user_id, cycle_id
+      `;
+      const reviewed = updated[0];
+      if (!reviewed) {
+        // Lost the race against another reviewer between SELECT and UPDATE.
+        throw new ConflictError("Este reporte ya fue revisado.", "REPORT_ALREADY_REVIEWED");
+      }
+
+      if (decision === "APPROVED") {
+        await fulfilObligation(reviewed.cycle_id, reviewed.user_id, reviewed.id);
+      }
+      await notifyReview(reviewed.user_id, { reportId: reviewed.id, cycleId: reviewed.cycle_id, status: decision, note: reviewNote });
+
+      return { id: reviewed.id, status: decision, userId: reviewed.user_id, cycleId: reviewed.cycle_id };
+    },
+
+    async listMyReports(actor, listOptions = {}) {
+      const limit = clampLimit(listOptions.limit);
+      return db.$queryRaw<MyReportRow[]>`
+        /* @pay:my-reports */
+        SELECT r.id, r.amount::text AS amount, r.currency, r.method::text AS method, r.status,
+               r.paid_at AS "paidAt", r.reported_at AS "reportedAt", r.review_note AS "reviewNote",
+               r.proof_key AS "proofKey", r.cycle_id AS "cycleId", c.period_key AS "periodKey"
+        FROM payment_reports r
+        JOIN payment_cycles c ON c.id = r.cycle_id
+        WHERE r.user_id = ${actor.id}::uuid
+        ORDER BY r.reported_at DESC
+        LIMIT ${limit}
+      `;
+    },
+
+    async listReviewQueue(listOptions = {}) {
+      const limit = clampLimit(listOptions.limit);
+      return db.$queryRaw<ReviewQueueRow[]>`
+        /* @pay:review-queue */
+        SELECT r.id, r.amount::text AS amount, r.currency, r.method::text AS method,
+               r.paid_at AS "paidAt", r.reported_at AS "reportedAt", r.note, r.proof_key AS "proofKey",
+               r.reference, r.user_id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
+               r.cycle_id AS "cycleId", c.period_key AS "periodKey"
+        FROM payment_reports r
+        JOIN users u ON u.id = r.user_id
+        JOIN payment_cycles c ON c.id = r.cycle_id
+        WHERE r.status = 'PENDING'
+          AND (${listOptions.cycleId ?? null}::uuid IS NULL OR r.cycle_id = ${listOptions.cycleId ?? null}::uuid)
+        ORDER BY r.reported_at ASC
+        LIMIT ${limit}
+      `;
+    },
+  };
+}

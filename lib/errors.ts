@@ -87,6 +87,14 @@ export class NotFoundError extends AppError {
   }
 }
 
+/** 409 — the request is valid but conflicts with current state (§10). */
+export class ConflictError extends AppError {
+  constructor(message: string, code = "CONFLICT") {
+    super(409, code, message);
+    this.name = "ConflictError";
+  }
+}
+
 /** Success envelope. */
 export function ok<T>(data: T): ApiSuccess<T> {
   return { ok: true, data };
