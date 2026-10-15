@@ -1,6 +1,6 @@
 // =============================================================================
-// red-referidos — Prisma 6 mirror of prisma/migrations/0001_init/migration.sql
-// SDD slice PR3 (task 2.2).
+// red-referidos — Prisma 6 mirror of the hand-written DDL in prisma/migrations/
+// SDD slice PR3 (task 2.2); extended by every later migration (e.g. 0003).
 //
 // THIS FILE HAS NO DDL AUTHORITY.
 // The hand-written SQL migration is the single source of truth (design:
@@ -186,6 +186,7 @@ model User {
   passwordResets       PasswordReset[]
   ownedFiles           StoredFile[]      @relation("FileOwner")
   cycleObligations     CycleObligation[]
+  weeklyReports        WeeklyReport[]
 
   @@unique([email], map: "uq_users_email")
   @@unique([publicCode], map: "uq_users_public_code")
@@ -253,6 +254,7 @@ model PaymentCycle {
 
   paymentReports PaymentReport[]
   obligations    CycleObligation[]
+  weeklyReports  WeeklyReport[]
 
   @@unique([periodKey], map: "uq_cycles_period_key")
   @@index([status], map: "idx_cycles_status")
@@ -539,6 +541,40 @@ model CycleObligation {
   @@index([userId], map: "idx_obligations_user")
   @@index([cycleId, status], map: "idx_obligations_cycle_status")
   @@map("cycle_obligations")
+}
+
+// -----------------------------------------------------------------------------
+// weekly_reports (§8.4, migration 0003) — the self-service weekly report:
+// one row per person per cycle (uq_weekly_reports_user_cycle). The seven cell
+// counters default to 0 because "no cell activity" is the common case; the
+// service validates ranges, the table only guarantees shape. `visitors` holds
+// the still-unregistered visitors by name (no identity to reference yet).
+// -----------------------------------------------------------------------------
+
+model WeeklyReport {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  cycleId              String   @map("cycle_id") @db.Uuid
+  attended             Boolean  @default(false)
+  discipleshipAttended Boolean  @default(false) @map("discipleship_attended")
+  cellsTotal           Int      @default(0) @map("cells_total")
+  cellsHeld            Int      @default(0) @map("cells_held")
+  cellsNotHeld         Int      @default(0) @map("cells_not_held")
+  cellAttendees        Int      @default(0) @map("cell_attendees")
+  cellAbsentees        Int      @default(0) @map("cell_absentees")
+  cellNewVisitors      Int      @default(0) @map("cell_new_visitors")
+  cellNewCells         Int      @default(0) @map("cell_new_cells")
+  visitors             Json     @default("[]") @map("visitors") @db.JsonB
+  note                 String?  @map("note") @db.Text
+  createdAt            DateTime @default(dbgenerated("now()")) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime @default(dbgenerated("now()")) @map("updated_at") @db.Timestamptz(6)
+
+  user  User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  cycle PaymentCycle @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, cycleId], map: "uq_weekly_reports_user_cycle")
+  @@index([cycleId], map: "idx_weekly_reports_cycle")
+  @@map("weekly_reports")
 }
 
 // -----------------------------------------------------------------------------

@@ -18,13 +18,17 @@
 // SCALAR (or an array for the one JSON-typed key): functions in the migration
 // read them with `(s.value #>> '{}')::INTEGER`, which only works on scalars.
 //
-// Two values deviate from the literal §6 default; both are recorded in
-// docs/decisiones.md (D7) and carry the reason in their `description`, so the
+// Three values deviate from the literal §6 default; all are recorded in
+// docs/decisiones.md and carry the reason in their `description`, so the
 // deviation is visible from /admin/settings and auditable:
-//   * referral.require_email_verification -> false (project ships no mail
-//     stack, so there is nothing that could ever satisfy a verification)
-//   * general.logo_key / support_email / terms_url -> "" (§6 lists no default
-//     and `settings.value` is NOT NULL; empty string is the "unset" sentinel)
+//   * referral.require_email_verification -> false (D7; this project ships no
+//     mail stack, so there is nothing that could ever satisfy a verification)
+//   * general.logo_key / support_email / terms_url -> "" (D7; §6 lists no
+//     default and `settings.value` is NOT NULL; empty string is the "unset"
+//     sentinel)
+//   * visibility.member_sees_downline_amounts -> false (D39; §6 says true, the
+//     F4 privacy contract keeps a downline offering amount invisible unless an
+//     admin enables it; migration 0003 aligns databases seeded with true)
 // =============================================================================
 
 /** Mirrors the `setting_type` enum created by 0001_init. */
@@ -406,11 +410,15 @@ export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
   },
   {
     key: "visibility.member_sees_downline_amounts",
+    // D39: §6 default is true; the F4 privacy contract hides the amount of a
+    // downline offering unless an admin explicitly enables it. Migration 0003
+    // flips databases seeded with the §6 default.
     type: "BOOL",
-    value: true,
+    value: false,
     groupName: "visibility",
     label: "El miembro ve los montos",
-    description: "Si es false, ve el hecho del pago pero no el monto.",
+    description:
+      "Si es false, ve el hecho del pago pero no el monto. Por defecto false (D39): el monto de una ofrenda es dato privado de quien la reporta.",
     isPublic: false,
     editableBy: "ADMIN",
   },

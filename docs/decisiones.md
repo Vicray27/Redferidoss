@@ -483,3 +483,42 @@ resuelve hacia lo más configurable (spec §18.7).
 - Consecuencias: un error futuro en el matcher degrada a "un redirect de más",
   nunca a "acceso anónimo a /admin" (la autoridad sigue siendo
   `requireSession` en cada página).
+
+### D37 - Estado de ciclo derivado: OPEN/GRACE desde el reloj, CLOSED terminal
+- Contexto: `payment_cycles.status` sólo necesita dos estados persistidos para
+  los jobs (OPEN normal y CLOSED liquidado), pero la spec habla de ventana
+  abierta, gracia y cierre.
+- Decisión: `effectiveCycleStatus(row, now)` (lib/cycles.ts) deriva
+  OPEN/GRACE/CLOSED del reloj — `[starts_at, ends_at)` es OPEN,
+  `[ends_at, due_at)` es GRACE y `[due_at, ∞)` es CLOSED — sin scheduler; un
+  CLOSED almacenado es TERMINAL y ningún cambio posterior de settings lo
+  reabre. `isReportable` admite el reporte en `[starts_at, due_at)` y nunca
+  sobre un CLOSED almacenado.
+- Consecuencias: la etiqueta que ve el miembro no necesita cron; el job de
+  liquidación (F7) sólo persistirá CLOSED y obligaciones MISSED cuando
+  corresponda, y el reporte tardío deja de ser posible al vencer `due_at`.
+
+### D38 - weekly_reports: una fila por persona y ciclo, contadores con default 0
+- Decisión: la tabla `weekly_reports` (migración 0003) tiene
+  `UNIQUE (user_id, cycle_id)`: la asistencia la marca la propia persona y
+  nadie marca por otro, así que no hay múltiples filas ni columna de revisor.
+  Siete contadores INTEGER con DEFAULT 0 (total, realizadas, no realizadas,
+  presentes, ausentes, nuevos, células nuevas), `visitors` JSONB con los
+  visitantes aún no registrados (por nombre, sin identidad referenciable
+  todavía) y `note` libre. El servicio hace upsert mientras el ciclo sea
+  reportable (D37); los rangos los valida el servicio, la tabla garantiza la
+  forma.
+- Consecuencias: los agregados administrativos leen por `cycle_id`
+  (`idx_weekly_reports_cycle`); una fila con ceros significa "no hubo
+  actividad", distinta de "no reportó" (sin fila), y F4b podrá contar ambas.
+
+### D39 - Montos de la red ocultos por defecto (desviación de §6)
+- Decisión: `visibility.member_sees_downline_amounts` se siembra en false
+  (§6 dice true): un miembro ve el HECHO de la ofrenda de su referido directo
+  pero no el monto, salvo que un admin lo habilite. La migración 0003 hace
+  UPDATE de las filas ya sembradas en true; el catálogo ya trae el nuevo
+  default.
+- Consecuencias: el admin conserva el control (la clave sigue siendo
+  editable); las lecturas de miembro deben exponer sólo el hecho (reporte
+  cuyo status <> 'REJECTED'), nunca `amount` ni `reference`, cuando la clave
+  esté en false.

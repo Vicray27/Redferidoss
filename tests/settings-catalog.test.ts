@@ -198,4 +198,11 @@ describe("§6 values the rest of the system depends on", () => {
   it("does not require email verification in a project with no mail provider (D7)", () => {
     expect(valueOf("referral.require_email_verification")).toBe(false);
   });
+
+  it("hides downline offering amounts by default (F4a, D39 — §6 says true)", () => {
+    // The F4 privacy contract: a member sees the FACT of a direct invitee's
+    // offering, not the amount, unless an admin enables this key. Migration
+    // 0003 carries the same flip for databases seeded before D39.
+    expect(valueOf("visibility.member_sees_downline_amounts")).toBe(false);
+  });
 });

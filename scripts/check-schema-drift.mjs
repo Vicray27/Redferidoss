@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * check-schema-drift.mjs — proves prisma/schema.prisma is an exact mirror of
- * prisma/migrations/0001_init/migration.sql, with ZERO drift.
+ * every migration in prisma/migrations/, concatenated in lexicographic
+ * (chronological) order, with ZERO drift.
  *
  * The SQL migration is the only DDL authority in this repo (see the header of
  * schema.prisma and docs/decisiones.md). Prisma 6 cannot express ltree, GiST,
@@ -24,13 +25,29 @@
  * Usage: pnpm db:check:drift
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SQL_PATH = join(ROOT, "prisma", "migrations", "0001_init", "migration.sql");
+const MIGRATIONS_DIR = join(ROOT, "prisma", "migrations");
 const SCHEMA_PATH = join(ROOT, "prisma", "schema.prisma");
+
+/**
+ * Every migration, in lexicographic order — chronological because the folder
+ * names are zero-padded (`0001_init`, `0002_settings_notify`, `0003_…`).
+ *
+ * The checker used to read 0001_init alone. Additive migrations carry their
+ * own CREATE TABLE statements, so after F4a a 0001-only read would report
+ * every later table as drift in both directions. Concatenating them keeps the
+ * SQL side honest as the schema grows in F4–F8.
+ */
+const MIGRATION_SQL = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => join(MIGRATIONS_DIR, entry.name, "migration.sql"))
+  .sort()
+  .map((path) => readFileSync(path, "utf8"))
+  .join("\n");
 
 // --- SQL type -> canonical token --------------------------------------------
 // `int4`/`int8` are the internal Postgres names of INTEGER/BIGINT; normalising
@@ -441,7 +458,7 @@ function compare(sql, schema, sqlOnly) {
 
 // --- report -----------------------------------------------------------------
 
-const sql = parseSql(readFileSync(SQL_PATH, "utf8"));
+const sql = parseSql(MIGRATION_SQL);
 const schemaRaw = readFileSync(SCHEMA_PATH, "utf8");
 const schema = parseSchema(schemaRaw);
 const drift = compare(sql, schema, declaredSqlOnlyIndexes(schemaRaw));
@@ -450,7 +467,7 @@ const sqlColumns = [...sql.tables.values()].reduce((acc, t) => acc + t.columns.s
 const prismaColumns = [...schema.models.values()].reduce((acc, m) => acc + m.columns.size, 0);
 const sqlOnly = declaredSqlOnlyIndexes(schemaRaw);
 
-console.log("red-referidos — schema.prisma vs 0001_init/migration.sql");
+console.log("red-referidos — schema.prisma vs every migration (prisma/migrations/*/migration.sql)");
 console.log(`  enums    ${sql.enums.size} sql / ${schema.enums.size} prisma`);
 console.log(`  tables   ${sql.tables.size} sql / ${schema.models.size} prisma`);
 console.log(`  columns  ${sqlColumns} sql / ${prismaColumns} prisma`);
@@ -459,7 +476,7 @@ console.log(
 );
 
 if (drift.length === 0) {
-  console.log("\nZERO DRIFT: prisma/schema.prisma mirrors 0001_init/migration.sql exactly.");
+  console.log("\nZERO DRIFT: prisma/schema.prisma mirrors the migrations exactly.");
   process.exit(0);
 }
 
