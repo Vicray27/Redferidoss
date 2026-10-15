@@ -607,3 +607,25 @@ resuelve hacia lo más configurable (spec §18.7).
   `REPORT_ALREADY_EXISTS`. El `code` de la tabla configurable `payment_methods`
   se proyecta al enum SQL `payment_method` por vocabulario (§5.5) con `OTHER`
   como fallback para métodos propios del admin.
+
+### D44 - Vida del reporte semanal: upsert hasta el cierre (sin advisory lock)
+- Contexto: §8.4 pide "un reporte por semana" auto-servicio, con contadores que
+  la persona conoce mejor al final del ciclo; migración 0003 fija un único
+  `uq_weekly_reports_user_cycle`. Faltaba decidir si el reporte semanal se
+  escribe una sola vez o se puede corregir, y hasta cuándo.
+- Decisión: `saveReport` es un UPSERT (`ON CONFLICT (user_id, cycle_id) DO
+  UPDATE`) mientras el ciclo esté en su ventana `[starts_at, due_at)` (misma
+  ventana que D43): la persona puede corregir sus números durante la semana y
+  el reporte queda congelado al cerrar. Una sola sentencia ⇒ dos pestañas no
+  pueden duplicar la fila y no hace falta advisory lock (doctrina de D41). Los
+  contadores se validan en `[0, 9999]`, hasta 50 nombres de visitantes (≤120
+  caracteres, trim) y nota ≤2000 caracteres; la lectura del downline
+  reutiliza `scopeFilter` (alias `u`), así el techo de D40 aplica sin código
+  propio.
+- Consecuencias: el caso límite A6 (domingo 23:59) no requiere aritmética de
+  timezone en el servicio — el ciclo que contiene a `now()` ya fue planificado
+  con `week_start_day` y `general.timezone` en `cycle:ensure`; con ciclo
+  cerrado y sin ciclos abiertos, `saveReport` responde 409
+  `NO_REPORT_WINDOW`. La "Visión Celular" del líder (reunión propia +
+  actividad de su gente directa) se compone con `myReports` +
+  `downlineReports`, ambos filtrados por la misma capa de autorización.
