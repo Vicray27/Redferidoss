@@ -9,6 +9,14 @@
 // enough, because a listing query can silently omit it — so both halves exist
 // here and every network query in lib/network.ts takes the second one.
 //
+// THE F4 MEMBER CEILING
+// ---------------------
+// §6 exposes `visibility.downline_depth_visible` as a configurable cap, but the
+// F4 "Visión Celular" contract fixes an additional hard ceiling: a MEMBER sees
+// their DIRECT invitees and nothing below them. The setting can only be
+// tightened below that ceiling — its "0 = unlimited" sentinel never widens a
+// member's view (D40 in docs/decisiones.md).
+//
 // THREE THINGS THIS MODULE DELIBERATELY DOES NOT DO
 //
 // 1. It does not filter in the client. `scopeFilter` returns a SQL fragment that
@@ -40,6 +48,17 @@ import type { UserRole } from "./users";
 
 /** §6 key that caps how far down a MEMBER may look. 0 = unlimited. */
 export const DOWNLINE_DEPTH_SETTING = "visibility.downline_depth_visible";
+
+/**
+ * Hard ceiling on a MEMBER's reach, in closure depths: 1 = direct invitees (D40).
+ *
+ * The §6 setting above is admin-editable and says "0 = unlimited"; the F4
+ * "Visión Celular" contract cannot afford that — a member's network view is
+ * their direct invitees, the circle they are responsible for. The configured
+ * value is narrowed against this constant with `narrowDepthCap`, so the
+ * ceiling holds no matter what an admin types.
+ */
+export const MEMBER_MAX_VISIBLE_DEPTH = 1;
 
 /**
  * Default alias of the `users` row a scoped query filters.
@@ -108,7 +127,10 @@ export interface Authorization {
   assertCanViewUser(actor: SessionActor, targetId: string): Promise<void>;
   /** §7.1's second half: the WHERE fragment every network read must AND in. */
   scopeFilter(actor: SessionActor, options?: ScopeOptions): Promise<NetworkScope>;
-  /** The configured downline cap. 0 = unlimited. */
+  /**
+   * The effective downline cap in force for a MEMBER: the configured value
+   * narrowed by `MEMBER_MAX_VISIBLE_DEPTH` (D40), so today always 1. Never 0.
+   */
   visibleDownlineDepth(): Promise<number>;
 }
 
@@ -167,7 +189,10 @@ export function createAuthorization(db: RawQueryDb, settings: SettingsLike): Aut
         `${DOWNLINE_DEPTH_SETTING} must be a non-negative integer (0 = unlimited), received ${JSON.stringify(value)}`,
       );
     }
-    return Math.trunc(depth);
+    // D40: the configured value can only tighten the F4 ceiling, never widen
+    // it. Truncate the configuration first, then narrow — the order makes the
+    // composed result explicit even though the ceiling hides it today.
+    return narrowDepthCap(Math.trunc(depth), MEMBER_MAX_VISIBLE_DEPTH);
   };
 
   return {
@@ -185,7 +210,11 @@ export function createAuthorization(db: RawQueryDb, settings: SettingsLike): Aut
       const maxDepth = await visibleDownlineDepth();
       if (rows.length === 0) throw new ForbiddenError("target is outside the actor's subtree");
       if (maxDepth > 0 && rows[0].depth > maxDepth) {
-        throw new ForbiddenError(`downline depth ${rows[0].depth} exceeds ${DOWNLINE_DEPTH_SETTING}`);
+        // maxDepth is the EFFECTIVE cap (D40): the configured value after the
+        // member ceiling, not the raw setting — the reason names what applied.
+        throw new ForbiddenError(
+          `downline depth ${rows[0].depth} exceeds the effective cap of ${maxDepth}`,
+        );
       }
     },
 

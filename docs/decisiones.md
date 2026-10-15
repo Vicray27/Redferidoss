@@ -522,3 +522,24 @@ resuelve hacia lo más configurable (spec §18.7).
   editable); las lecturas de miembro deben exponer sólo el hecho (reporte
   cuyo status <> 'REJECTED'), nunca `amount` ni `reference`, cuando la clave
   esté en false.
+
+### D40 - Un miembro ve solo a sus referidos directos (techo duro de la vista de red)
+- Contexto: §6 expone `visibility.downline_depth_visible` ("0 = ilimitado") y
+  F3 permitía al miembro navegar hasta el nivel configurado. La fase celular
+  convierte la red en un circuito semanal: cada persona responde por su
+  círculo directo, y no hay razón para que vea la estructura ni los
+  contadores de subárboles ajenos.
+- Decisión: `MEMBER_MAX_VISIBLE_DEPTH = 1` (lib/authz.ts): el valor
+  configurado pasa por `narrowDepthCap` contra ese techo, así que puede
+  ajustar por debajo pero nunca por encima — 0 ya no significa "ilimitado"
+  para un miembro. En lib/network.ts `childrenCount` se fuerza a 0 fuera de
+  la propia fila y `subtreeSize` corre bajo el mismo `scopeFilter`: cuenta
+  solo los descendientes que el actor puede ver. La ficha de un referido
+  directo (app/portal/network/[id]) oculta "Referidos directos", "Tamaño de
+  su red", el link de red y el subárbol para el miembro; staff y la propia
+  persona conservan la vista completa.
+- Consecuencias: la página "sin acceso" de la ficha pasa a cubrir también el
+  nivel 2 (antes el 403 recién llegaba en el nivel 4); el miembro deja de ver
+  los links `/r/CODIGO` de terceros; "Tamaño de mi red" para un miembro pasa
+  a significar sus referidos directos. El ajuste §6 queda conservado e
+  inerte mientras el techo de F4 esté en 1.

@@ -393,7 +393,7 @@ export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
     value: 0,
     groupName: "visibility",
     label: "Niveles visibles hacia abajo",
-    description: "Cuantos niveles hacia abajo ve un miembro. 0 = ilimitado.",
+    description: "Cuantos niveles hacia abajo ve un miembro. La fase celular (D40) fija un techo de 1 (sus referidos directos); esta clave se conserva por §6 pero no puede ampliar la vista.",
     minValue: 0,
     isPublic: false,
     editableBy: "ADMIN",

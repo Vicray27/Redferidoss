@@ -127,7 +127,7 @@ describe("clampLimit", () => {
 // ---------------------------------------------------------------------------
 
 describe("listChildren — the scope fragment goes into the SQL (§7.1)", () => {
-  it("embeds the member's scope fragment with the actor id and the depth cap", async () => {
+  it("embeds the member's scope fragment with the actor id and the F4 cap", async () => {
     const fake = new NetFake().on("@net:children", () => [CHILD_ROW]);
     const { network } = makeService(fake);
 
@@ -142,7 +142,8 @@ describe("listChildren — the scope fragment goes into the SQL (§7.1)", () => 
         status: "ACTIVE",
         depth: 1,
         joinedAt: "2026-09-01T12:00:00.000Z",
-        childrenCount: 2,
+        // D40: the downline node's count is not the member's to see.
+        childrenCount: 0,
         cursor: "root.member-1.child-1",
       },
     ]);
@@ -150,7 +151,8 @@ describe("listChildren — the scope fragment goes into the SQL (§7.1)", () => 
     const fragment = fake.scopeFragmentOf("@net:children");
     expect(fragment).not.toBeNull();
     expect(fragment?.sql).toContain("EXISTS");
-    expect(fragment?.values).toEqual(["member-1", 3, 3]);
+    // Configured 3 is narrowed to the member ceiling of 1 (D40).
+    expect(fragment?.values).toEqual(["member-1", 1, 1]);
   });
 
   it("adds no clause for staff", async () => {
@@ -177,7 +179,7 @@ describe("listChildren — the scope fragment goes into the SQL (§7.1)", () => 
 
   it("refuses a parent beyond the visible depth", async () => {
     const fake = new NetFake().on("@net:children", () => []);
-    fake.closureRows = [{ depth: 9 }]; // deeper than the configured cap of 3
+    fake.closureRows = [{ depth: 9 }]; // deeper than the F4 member ceiling (D40)
     const { network } = makeService(fake);
 
     await expect(network.listChildren(MEMBER, { parentId: "deep-9" })).rejects.toBeInstanceOf(
@@ -234,7 +236,17 @@ describe("search", () => {
 
     expect(hits).toHaveLength(1);
     const fragment = fake.scopeFragmentOf("@net:search");
-    expect(fragment?.values).toEqual(["member-1", 3, 3]);
+    expect(fragment?.values).toEqual(["member-1", 1, 1]);
+  });
+
+  it("hides the count on others but keeps it on the member's own row (D40)", async () => {
+    const selfRow = { ...CHILD_ROW, id: "member-1", childrenCount: BigInt(5) };
+    const fake = new NetFake().on("@net:search", () => [selfRow, CHILD_ROW]);
+    const { network } = makeService(fake);
+
+    const hits = await network.search(MEMBER, "hijo");
+
+    expect(hits.map((node) => node.childrenCount)).toEqual([5, 0]);
   });
 
   it("passes the raw term as a bind parameter, never into SQL text", async () => {
@@ -266,9 +278,10 @@ describe("node — detail with contact rules", () => {
 
     expect(detail.contact).toEqual({ email: "hijo@example.com", phone: "+595 981 000 000" });
     expect(detail.sponsor).toEqual(SPONSOR_REF);
+    expect(detail.childrenCount).toBe(2);
   });
 
-  it("hides contact data from a member browsing a downline node", async () => {
+  it("hides contact data and the downline count from a member browsing a downline node", async () => {
     const fake = new NetFake()
       .on("@net:node", () => [DETAIL_ROW])
       .on("@net:sponsor", () => [SPONSOR_REF]);
@@ -277,6 +290,7 @@ describe("node — detail with contact rules", () => {
 
     const detail = await network.node(MEMBER, "child-1");
     expect(detail.contact).toBeNull();
+    expect(detail.childrenCount).toBe(0);
   });
 
   it("shows contact data to the member on their own row", async () => {
@@ -288,6 +302,8 @@ describe("node — detail with contact rules", () => {
 
     const detail = await network.node(MEMBER, "member-1");
     expect(detail.contact).toEqual({ email: "hijo@example.com", phone: "+595 981 000 000" });
+    // The D40 count rule has an exception: you always see your own count.
+    expect(detail.childrenCount).toBe(2);
   });
 
   it("404s when the scoped statement selects nothing", async () => {
@@ -314,26 +330,40 @@ describe("node — detail with contact rules", () => {
 // ---------------------------------------------------------------------------
 
 describe("breadcrumb — same code path, the scope fragment decides", () => {
-  const CHAIN = [
+  const FULL_CHAIN = [
     { id: "root-1", publicCode: "ROOT0001", fullName: "Raíz", depth: 0 },
     { id: "member-1", publicCode: "PARENT01", fullName: "Mamá", depth: 1 },
     { id: "child-1", publicCode: "CHILD001", fullName: "Hijo Uno", depth: 2 },
   ];
 
-  it("filters ancestors with the alias the query actually uses (`a`)", async () => {
-    const fake = new NetFake().on("@net:breadcrumb", () => CHAIN);
-    fake.closureRows = [{ depth: 2 }];
+  it("trims the member's chain to the F4 ceiling (D40)", async () => {
+    // The real scoped statement never returns root-1 for a member — it sits at
+    // depth 2 from them and the fragment filters it out; the fake serves the
+    // rows the scoped SQL would.
+    const memberChain = FULL_CHAIN.slice(1);
+    const fake = new NetFake().on("@net:breadcrumb", () => memberChain);
+    fake.closureRows = [{ depth: 1 }];
     const { network } = makeService(fake);
 
     const chain = await network.breadcrumb(MEMBER, "child-1");
-    expect(chain.map((n) => n.id)).toEqual(["root-1", "member-1", "child-1"]);
+    expect(chain.map((n) => n.id)).toEqual(["member-1", "child-1"]);
 
     const fragment = fake.scopeFragmentOf("@net:breadcrumb");
-    expect(fragment?.values).toEqual(["member-1", 3, 3]);
+    expect(fragment?.sql).toContain("sc.descendant_id = a.id");
+    expect(fragment?.values).toEqual(["member-1", 1, 1]);
+  });
+
+  it("gives staff the full chain with no fragment", async () => {
+    const fake = new NetFake().on("@net:breadcrumb", () => FULL_CHAIN);
+    const { network } = makeService(fake);
+
+    const chain = await network.breadcrumb(ROOT, "child-1");
+    expect(chain.map((n) => n.id)).toEqual(["root-1", "member-1", "child-1"]);
+    expect(fake.scopeFragmentOf("@net:breadcrumb")).toBeNull();
   });
 
   it("refuses ids outside the member's subtree", async () => {
-    const fake = new NetFake().on("@net:breadcrumb", () => CHAIN);
+    const fake = new NetFake().on("@net:breadcrumb", () => FULL_CHAIN);
     fake.closureRows = [];
     const { network } = makeService(fake);
 
@@ -347,12 +377,23 @@ describe("breadcrumb — same code path, the scope fragment decides", () => {
 // ---------------------------------------------------------------------------
 
 describe("subtreeSize", () => {
-  it("counts descendants of the actor's own node", async () => {
+  it("counts the member's network under the scope fragment (D40)", async () => {
     const fake = new NetFake().on("@net:subtree", () => [{ total: BigInt(7) }]);
     const { network } = makeService(fake);
 
     expect(await network.subtreeSize(MEMBER)).toBe(7);
     expect(fake.callsFor("@net:subtree")[0].values).toContain("member-1");
+    // The count itself is disclosure: it only counts rows the member may see.
+    const fragment = fake.scopeFragmentOf("@net:subtree");
+    expect(fragment?.values).toEqual(["member-1", 1, 1]);
+  });
+
+  it("counts without a fragment for staff", async () => {
+    const fake = new NetFake().on("@net:subtree", () => [{ total: BigInt(7) }]);
+    const { network } = makeService(fake);
+
+    expect(await network.subtreeSize(ROOT, "member-1")).toBe(7);
+    expect(fake.scopeFragmentOf("@net:subtree")).toBeNull();
   });
 
   it("returns 0 rather than NaN for a missing row", async () => {
@@ -424,7 +465,8 @@ describe("invariant — every network read carries a scope decision (§7.1)", ()
       .on("@net:search", () => [])
       .on("@net:node", () => [{ ...CHILD_ROW, email: null, phone: null, sponsorId: null }])
       .on("@net:sponsor", () => [])
-      .on("@net:breadcrumb", () => []);
+      .on("@net:breadcrumb", () => [])
+      .on("@net:subtree", () => [{ total: 0 }]);
     fake.closureRows = [{ depth: 1 }];
     const { network } = makeService(fake);
 
@@ -432,8 +474,15 @@ describe("invariant — every network read carries a scope decision (§7.1)", ()
     await network.search(MEMBER, "x");
     await network.node(MEMBER, "child-1");
     await network.breadcrumb(MEMBER, "child-1");
+    await network.subtreeSize(MEMBER);
 
-    const scopedMarkers = ["@net:children", "@net:search", "@net:node", "@net:breadcrumb"];
+    const scopedMarkers = [
+      "@net:children",
+      "@net:search",
+      "@net:node",
+      "@net:breadcrumb",
+      "@net:subtree",
+    ];
     for (const marker of scopedMarkers) {
       expect(fake.scopeFragmentOf(marker), `${marker} missing scope fragment`).not.toBeNull();
     }

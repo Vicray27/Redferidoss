@@ -5,6 +5,7 @@ import {
   DOWNLINE_DEPTH_SETTING,
   FORBIDDEN_MESSAGE,
   ForbiddenError,
+  MEMBER_MAX_VISIBLE_DEPTH,
   createAuthorization,
   isStaffActor,
   narrowDepthCap,
@@ -84,18 +85,25 @@ describe("assertCanViewUser — §7.1 verbatim", () => {
     await expect(authz.assertCanViewUser(actor(), MEMBER_ID)).resolves.toBeUndefined();
   });
 
-  it("a MEMBER sees its direct child when the cap is unlimited (0)", async () => {
+  it("a MEMBER sees its direct child even when the configured cap is unlimited (0)", async () => {
     const { db } = fakeDb({ [OTHER_ID]: 1 });
     const authz = createAuthorization(db, fakeSettings(0));
 
     await expect(authz.assertCanViewUser(actor(), OTHER_ID)).resolves.toBeUndefined();
   });
 
-  it("a MEMBER sees a level-3 descendant when the cap is 3", async () => {
+  it("never sees a level-3 descendant even when the configured cap is 3 (D40)", async () => {
     const { db } = fakeDb({ [OTHER_ID]: 3 });
     const authz = createAuthorization(db, fakeSettings(3));
 
-    await expect(authz.assertCanViewUser(actor(), OTHER_ID)).resolves.toBeUndefined();
+    await expect(authz.assertCanViewUser(actor(), OTHER_ID)).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("refuses a level-2 descendant — the ceiling is direct invitees only (D40)", async () => {
+    const { db } = fakeDb({ [OTHER_ID]: 2 });
+    const authz = createAuthorization(db, fakeSettings(3));
+
+    await expect(authz.assertCanViewUser(actor(), OTHER_ID)).rejects.toBeInstanceOf(ForbiddenError);
   });
 
   it("refuses a level-4 descendant when the cap is 3", async () => {
@@ -204,10 +212,11 @@ describe("scopeFilter — the mandatory half of §7.1", () => {
     expect(sql).toContain("FROM user_closure sc");
     expect(sql).toContain("sc.ancestor_id = ?::uuid");
     expect(sql).toContain("sc.descendant_id = n.id");
-    expect(scope.bindings).toEqual([MEMBER_ID, 0, 0]);
+    // Configured 0 ("unlimited") is still narrowed by the F4 ceiling (D40).
+    expect(scope.bindings).toEqual([MEMBER_ID, MEMBER_MAX_VISIBLE_DEPTH, MEMBER_MAX_VISIBLE_DEPTH]);
   });
 
-  it("binds the actor id and the cap; neither is spliced into the statement", async () => {
+  it("binds the actor id and the effective cap; neither is spliced into the statement", async () => {
     const authz = createAuthorization(fakeDb().db, fakeSettings(2));
 
     const scope = await authz.scopeFilter(actor());
@@ -215,8 +224,9 @@ describe("scopeFilter — the mandatory half of §7.1", () => {
 
     expect(sql).not.toContain(MEMBER_ID);
     expect(sql).not.toContain("2");
-    expect(scope.bindings).toEqual([MEMBER_ID, 2, 2]);
-    expect(scope.maxDepth).toBe(2);
+    // The configured 2 is narrowed by the F4 ceiling to 1 (D40).
+    expect(scope.bindings).toEqual([MEMBER_ID, 1, 1]);
+    expect(scope.maxDepth).toBe(1);
   });
 
   it("honours the caller's alias so each query can name its own users table", async () => {
@@ -275,7 +285,9 @@ describe("narrowDepthCap — 0 means unlimited, and must never win by arithmetic
 
     const scope = await authz.scopeFilter(actor(), { requestedMaxDepth: 50 });
 
-    expect(scope.maxDepth).toBe(2);
+    // 50 is not wider than the configured cap, and neither can out-reach the
+    // F4 ceiling (D40).
+    expect(scope.maxDepth).toBe(MEMBER_MAX_VISIBLE_DEPTH);
   });
 });
 
@@ -290,10 +302,15 @@ describe("visibleDownlineDepth", () => {
     ).rejects.toBeInstanceOf(RangeError);
   });
 
-  it("truncates a fractional value rather than letting it through", async () => {
-    const authz = createAuthorization(fakeDb().db, fakeSettings(3.9));
+  it("exposes the F4 ceiling as 1 — a member's direct invitees (D40)", () => {
+    expect(MEMBER_MAX_VISIBLE_DEPTH).toBe(1);
+  });
 
-    await expect(authz.visibleDownlineDepth()).resolves.toBe(3);
+  it("narrows every configured value to the F4 ceiling, including the 0 sentinel", async () => {
+    for (const configured of [0, 1, 2, 3.9, 999]) {
+      const authz = createAuthorization(fakeDb().db, fakeSettings(configured));
+      await expect(authz.visibleDownlineDepth()).resolves.toBe(MEMBER_MAX_VISIBLE_DEPTH);
+    }
   });
 });
 

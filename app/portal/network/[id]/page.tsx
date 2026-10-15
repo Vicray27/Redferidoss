@@ -9,6 +9,11 @@
 // Contact data and custom field values come back only when the viewer is
 // staff or the person themself; the service already applied that rule, so this
 // page renders what it received instead of deciding who deserves what.
+//
+// F4/D40: for a MEMBER viewing somebody else's file, this page is the person,
+// not their subtree — no children count, no network size, no referral link and
+// no tree. The service already scoped the data; hiding the blocks here is what
+// keeps a truthful "0" from rendering as if it were a fact.
 // =============================================================================
 
 import Link from "next/link";
@@ -18,7 +23,7 @@ import { LinkBox } from "@/components/link-box";
 import { NetworkTree } from "@/components/network/network-tree";
 import { SessionShell } from "@/components/session-shell";
 import { requireSession } from "@/lib/auth/require";
-import { ForbiddenError, authorization } from "@/lib/authz";
+import { ForbiddenError, authorization, isStaffActor } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
 import { createNetworkService } from "@/lib/network";
@@ -68,6 +73,10 @@ export default async function NetworkNodePage({
 
   const joined = detail.joinedAt.slice(0, 10);
 
+  // D40: counts, the referral link and the subtree belong to the person and to
+  // staff; a member browsing a direct invitee sees identity and registration.
+  const showsSubtree = isStaffActor(session) || session.userId === detail.id;
+
   return (
     <SessionShell
       session={session}
@@ -94,8 +103,10 @@ export default async function NetworkNodePage({
         <Fact label="Estado" value={detail.status} />
         <Fact label="Nivel" value={String(detail.depth)} />
         <Fact label="Registro" value={joined} />
-        <Fact label="Referidos directos" value={String(detail.childrenCount)} />
-        <Fact label="Tamaño de su red" value={String(subtree)} />
+        {showsSubtree ? (
+          <Fact label="Referidos directos" value={String(detail.childrenCount)} />
+        ) : null}
+        {showsSubtree ? <Fact label="Tamaño de su red" value={String(subtree)} /> : null}
       </dl>
 
       {detail.sponsor ? (
@@ -140,29 +151,35 @@ export default async function NetworkNodePage({
         </section>
       ) : null}
 
-      <section className="space-y-3 rounded-lg border bg-background p-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Su link de red
-        </h2>
-        <LinkBox
-          path={`/r/${detail.publicCode}`}
-          note={`Este es el link con el que ${detail.fullName} invita a sus propios referidos.`}
-        />
-      </section>
+      {showsSubtree ? (
+        <section className="space-y-3 rounded-lg border bg-background p-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Su link de red
+          </h2>
+          <LinkBox
+            path={`/r/${detail.publicCode}`}
+            note={`Este es el link con el que ${detail.fullName} invita a sus propios referidos.`}
+          />
+        </section>
+      ) : null}
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight">Su subárbol</h2>
-        <NetworkTree
-          rootId={detail.id}
-          rootDepth={detail.depth}
-          initialChildren={firstPage.nodes}
-          initialNextCursor={firstPage.nextCursor}
-        />
-      </section>
+      {showsSubtree ? (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold tracking-tight">Su subárbol</h2>
+          <NetworkTree
+            rootId={detail.id}
+            rootDepth={detail.depth}
+            initialChildren={firstPage.nodes}
+            initialNextCursor={firstPage.nextCursor}
+          />
+        </section>
+      ) : null}
 
-      <p className="text-xs text-muted-foreground">
-        El historial de pagos de esta persona llegará con la fase de pagos.
-      </p>
+      {showsSubtree ? (
+        <p className="text-xs text-muted-foreground">
+          El historial de pagos de esta persona llegará con la fase de pagos.
+        </p>
+      ) : null}
     </SessionShell>
   );
 }

@@ -21,6 +21,14 @@
 // unrestricted, get the full chain from the root. Same code path, the scope
 // fragment decides.
 //
+// FOR MEMBERS, COUNTS ARE SCOPED TOO
+// ----------------------------------
+// `childrenCount` and `subtreeSize` are disclosure like anything else: "3
+// people hang below this person" is information about a subtree the caller may
+// not read. Under the F4 ceiling (D40) a MEMBER only gets counts for their own
+// row, and `subtreeSize` runs under the same scope fragment as every other
+// read — so the number only ever counts people the member can actually see.
+//
 // PAGINATION IS KEYSET, NOT OFFSET
 // --------------------------------
 // `cursor` is the child's ltree `path` — stable under concurrent inserts, in
@@ -58,6 +66,7 @@ export interface NetworkNode {
   status: string;
   depth: number;
   joinedAt: string;
+  /** Direct children of the row; forced to 0 for a MEMBER looking at somebody else (D40). */
   childrenCount: number;
   /** Opaque keyset cursor (the node's ltree path). */
   cursor: string;
@@ -132,7 +141,16 @@ interface RawCustomValueRow {
   value: unknown;
 }
 
-function toNode(row: RawNodeRow): NetworkNode {
+/**
+ * D40: a MEMBER only sees the count on their own row. The children of a
+ * downline node are exactly the subtree the F4 ceiling hides, so a count there
+ * would leak by the number what the listing no longer shows.
+ */
+function countsVisibleFor(actor: SessionActor, rowId: string): boolean {
+  return isStaffActor(actor) || actor.userId === rowId;
+}
+
+function toNode(row: RawNodeRow, options: { childrenCountHidden?: boolean } = {}): NetworkNode {
   return {
     id: row.id,
     publicCode: row.publicCode,
@@ -140,7 +158,7 @@ function toNode(row: RawNodeRow): NetworkNode {
     status: row.status,
     depth: row.depth,
     joinedAt: row.joinedAt instanceof Date ? row.joinedAt.toISOString() : String(row.joinedAt),
-    childrenCount: Number(row.childrenCount ?? 0),
+    childrenCount: options.childrenCountHidden ? 0 : Number(row.childrenCount ?? 0),
     cursor: row.cursor,
   };
 }
@@ -190,7 +208,9 @@ export function createNetworkService(
 
     // LIMIT n+1: the extra row proves there is a next page without a COUNT.
     const hasMore = rows.length > limit;
-    const page = rows.slice(0, limit).map(toNode);
+    const page = rows
+      .slice(0, limit)
+      .map((row) => toNode(row, { childrenCountHidden: !countsVisibleFor(actor, row.id) }));
     return {
       parentId,
       nodes: page,
@@ -226,7 +246,7 @@ export function createNetworkService(
       LIMIT ${limit}
     `;
 
-    return rows.map(toNode);
+    return rows.map((row) => toNode(row, { childrenCountHidden: !countsVisibleFor(actor, row.id) }));
   };
 
   const node: NetworkService["node"] = async (actor, targetId) => {
@@ -279,7 +299,7 @@ export function createNetworkService(
     const canSeeContact = isStaffActor(actor) || actor.userId === row.id;
 
     return {
-      ...toNode(row),
+      ...toNode(row, { childrenCountHidden: !countsVisibleFor(actor, row.id) }),
       sponsor,
       contact: canSeeContact ? { email: row.email, phone: row.phone } : null,
     };
@@ -314,6 +334,14 @@ export function createNetworkService(
     const root = targetId ?? actor.userId;
     await authz.assertCanViewUser(actor, root);
 
+    // The count is a disclosure, so it runs under the same scope fragment as
+    // every other read (D40): a MEMBER counts the descendants they may
+    // actually see — their direct invitees at most — and a downline node's
+    // deeper network counts as 0 instead of leaking its size. Staff are
+    // unrestricted and keep the full number.
+    const scope = await authz.scopeFilter(actor, { alias: "u" });
+    const condition = scopeCondition(scope);
+
     // `depth > 0` excludes the closure's self row (ancestor = descendant), so
     // the number is "my network", not "my network plus me".
     const rows = await db.$queryRaw<{ total: unknown }[]>`
@@ -323,6 +351,7 @@ export function createNetworkService(
       JOIN users u ON u.id = c.descendant_id AND u.deleted_at IS NULL
       WHERE c.ancestor_id = ${root}::uuid
         AND c.depth > 0
+        ${condition}
     `;
 
     return Number(rows[0]?.total ?? 0);
