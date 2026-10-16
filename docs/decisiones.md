@@ -833,7 +833,17 @@ resuelve hacia lo más configurable (spec §18.7).
   "sin semanas" es un estado vacío, nunca un 500. Las cinco puertas (Pagos,
   Cumplimiento, Revisión, Reportes, Configuración) son tarjetas de navegación
   del encabezado; la portada del sitio ofrece el enlace a `/admin` únicamente a
-  staff (`isStaffRole`).
+  staff (`isStaffRole`). La tabla maestra vive en `/admin/pagos` con los doce
+  filtros como parámetros GET — una vista filtrada es un enlace compartible —
+  y la paginación y los enlaces de exportación re-serializan los filtros YA
+  normalizados: la URL de la próxima página no arrastra basura. La exportación
+  tiene dos puertas en una sola ruta (`/api/payments/export`): el conjunto
+  filtrado o la selección por `ids`; cuando `ids` está presente los filtros se
+  ignoran a propósito (exportar la selección exporta LA selección), y una
+  selección que no parsea a ningún id es 400 — jamás un fallback silencioso al
+  conjunto completo. El autocompletado de persona reutiliza
+  `dashboard.searchUsers` detrás de `/api/payments/users` (solo staff,
+  buscar-al-enviar: teclear no consulta).
 - Consecuencias: el panel es una cara delgada sobre `createDashboardService` —
   la página no decide semántica de KPIs (§8.5/D50) ni aritmética de dinero, y
   todo dato nuevo pasa por el servicio con su marcador `@dash:*` y su test. Las
