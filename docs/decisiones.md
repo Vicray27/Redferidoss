@@ -872,3 +872,27 @@ resuelve hacia lo más configurable (spec §18.7).
   acciones en lote de la tabla maestra sin código nuevo; agregar un estado o
   cambiar una etiqueta toca un mapa y una función; y "gris" nunca se lee como
   incumplimiento porque la leyenda lo nombra.
+
+### D55 - Métodos de pago configurables (F6): código inmutable, sin borrado y reordenamiento denso
+- Contexto: §5.6/§8.5 piden que la administración gestione el catálogo de
+  métodos (crear, editar, activar/desactivar, reordenar, instrucciones) sin
+  romper nada de lo que ya depende de él: el formulario de la semana elige por
+  id, `createReport` lee `requires_reference`/`requires_proof`, y la columna
+  histórica `method` (ENUM) proyecta el código con el fallback OTHER (D43).
+  Borrar un método referenciado es imposible (FK RESTRICT) y renombrar el
+  código reescribiría la lectura de reportes viejos.
+- Decisión: `lib/payment-methods-admin.ts` (solo ROOT/ADMIN; MEMBER recibe el
+  403 genérico sin tocar SQL). El `code` se fija UNA vez al crear —trim,
+  mayúsculas, 2..32 caracteres, letra inicial y luego letras/números/guion
+  bajo— y jamás viaja en el payload de edición: `code` inmutable (D55). No hay
+  delete: retirar un método es desactivarlo (`is_active = false`), y la API de
+  §10.5 se queda en GET/POST/PATCH. El reordenamiento (↑/↓ en el panel)
+  renumera DENSO la lista ordenada por `(sort_order, code)`: la columna no tiene
+  unique y dos filas pueden compartir orden, así que un swap ingenuo de dos
+  valores no movería nada en ese caso. Cada escritura aceptada deja UNA fila de
+  `audit_log` con before/after (`payment_method.create|update|reorder`).
+- Consecuencias: un método desactivado deja de ofrecerse en el formulario pero
+  conserva su etiqueta en la revisión, la tabla maestra y la exportación (el
+  reporte histórico nunca pierde su nombre); un código custom fuera del
+  vocabulario del ENUM sigue funcionando por D43; y la pantalla de
+  administración no puede tocar la base sin pasar por el servicio auditado.
