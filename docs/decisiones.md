@@ -734,8 +734,30 @@ resuelve hacia lo más configurable (spec §18.7).
   semanales es 12/26/52 ciclos (`CHART_WINDOWS`, default 12) anclada en el ciclo
   seleccionado (el seleccionado es el último punto), persistida en la URL como
   `semanas=`; un valor desconocido cae al default sin romper la página.
-- Consecuencias: los montos entran a la geometría como `number` solo para
+-   Consecuencias: los montos entran a la geometría como `number` solo para
   dibujar — el valor exacto que se imprime siempre sale de `lib/money.ts`; las
   gráficas se pueden testear sin DOM y se imprimen/exportan como HTML normal.
   Si una necesidad futura exige interacción (tooltips ricos, zoom), entra una
   librería en ese momento y solo para esa gráfica, no antes.
+
+### D50 - KPIs §8.5: ocho tarjetas con semántica fijada y aritmética en centavos
+- Contexto: §8.5 pide ocho tarjetas. "Ticket promedio", "tasa de cumplimiento",
+  "usuarios nuevos" y "tamaño de la red" admiten varias lecturas (¿promedio de
+  qué? ¿del periodo o histórico?), y una lectura implícita distinta en cada
+  consulta es la forma más rápida de que dos personas vean cifras distintas.
+- Decisión: todos los KPIs se anclan en la semana seleccionada (`?semana=`,
+  default la semana actual — misma convención que /admin/reportes, D37):
+  1. Recaudado = Σ de montos APPROVED de la semana; 2. Nº de reportes = todos
+  los reportes de la semana ("cuántos reportaron"); 3. Ticket promedio =
+  recaudado / reportes aprobados, división entera de centavos con truncado hacia
+  cero (nunca aparece una fracción de centavo); 4. Tasa de cumplimiento =
+  aprobados / obligaciones, un ratio de pantalla (NO dinero); 5. Pendientes y
+  6. Incumplidos = reportes PENDING y obligaciones MISSED de la semana;
+  7. Usuarios nuevos = altas dentro de la ventana de la semana;
+  8. Tamaño de la red = usuarios vivos, el único KPI independiente del periodo
+  (la pregunta es del estado actual). La media móvil de 4 semanas vive en la
+  tarjeta de recaudado como serie de fondo, no como KPI aparte.
+- Consecuencias: cada número es reproducible desde la base sin decisiones
+  ocultas; una tasa de cumplimiento sobre semanas viejas es exacta (la obligación
+  es el denominador correcto, no las filas de usuario). `lib/dashboard.ts`
+  documenta en su cabecera que la tasa es un ratio y no pasa por `lib/money.ts`.
