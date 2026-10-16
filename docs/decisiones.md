@@ -1084,3 +1084,40 @@ resuelve hacia lo más configurable (spec §18.7).
   (Auth.js no re-consulta el estado), aceptado para una suspensión por
   incumplimiento porque el login nuevo sí se bloquea
   (`ACCOUNT_SUSPENDED_MESSAGE`).
+
+### D61 - tree:verify: la recursión sobre sponsor_id como verdad, fn_tree_rebuild() como reparación y alerta acotada (F7)
+- Contexto: §9 pide que `tree:verify` "compare user_closure/path contra la
+  recursión sobre sponsor_id; si hay divergencia, registra alerta y
+  reconstruye" (A11/A13). El modelo tiene TRES estructuras redundantes (§4):
+  `users.sponsor_id` (canónico), `users.path`/`users.depth` y `user_closure`,
+  mantenidas por triggers y por `fn_user_move()`; el esqueleto que F2 dejó en
+  `lib/tree.ts` solo comparaba consistencia interna por fila (self-row, depth,
+  niveles del path), no la recursión contra `sponsor_id`. Y reparar exige
+  reescribir path/depth, algo que el guard `fn_user_tree_guard` solo permite
+  desde SQL con el switch transaccional `app.tree_maintenance`.
+- Decisión: (1) la verificación es UNA consulta recursiva: el walk hacia abajo
+  desde la raíz (`sponsor_id IS NULL`) es la verdad; deriva el path/depth
+  esperados y TODAS las aristas de cierre esperadas (self-rows incluidas), y
+  reporta por usuario: inalcanzable, depth/path divergentes, aristas
+  faltantes, obsoletas o con depth incorrecto. Los usuarios con soft-delete
+  se recorren como cualquier otro (conservan path/closure tras el borrado).
+  El esqueleto de F2 se retiró: la consulta completa lo supersede. (2) La
+  reparación es `fn_tree_rebuild()` (migración 0004, puramente aditiva):
+  reescribe `users.path`/`depth` y reconstruye `user_closure` entera desde
+  `sponsor_id` dentro de la transacción del job, con el MISMO switch que usa
+  `fn_user_move()` — un solo mecanismo de bypass, no dos. (3) Una cadena de
+  patrocinadores rota (ciclo o referencia colgante por SQL manual) no es
+  alcanzable desde el walk: el rebuild NO inventa un padre, reporta
+  `remaining` y alerta — la reconstrucción no puede ser más sabia que el
+  puntero canónico. (4) Alerta = UNA fila de `audit_log` (actor NULL,
+  `tree.verify_repaired`, problemas de ANTES acotados a 50 + resumen de
+  después) + UNA notificación in-app a ROOT/ADMIN ACTIVE (`tree.verify_alert`,
+  D59); una corrida limpia no escribe nada. (5) `tree:verify` es
+  multi-statement y entra al wrapper del lock (D59). (6) `prisma migrate
+  deploy` debe correr en cada entorno para que 0004 exista; sin ella el job
+  falla al reparar (no en la verificación).
+- Consecuencias: A11 ("sin divergencias tras 1.000 registros") se demuestra
+  con el job real sobre una base sembrada; la raza residual con un
+  `fn_user_move` concurrente la auto-reporta la re-verificación y converge en
+  la corrida siguiente; y la función de rebuild queda disponible para un
+  "reparar" manual futuro sin duplicar SQL en la aplicación.

@@ -56,7 +56,7 @@ export const JOBS: readonly JobDefinition[] = [
     name: "tree:verify",
     description: "Compares user_closure/path against the recursive traversal and repairs.",
     schedule: "daily 03:00",
-    implemented: false,
+    implemented: true,
   },
   {
     name: "files:gc",

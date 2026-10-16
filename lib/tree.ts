@@ -242,31 +242,3 @@ export interface TreeDivergence {
   publicCode: string;
   reason: string;
 }
-
-/**
- * `tree:verify` skeleton (A11/A13): the three redundant structures must agree.
- *
- * Runs the closure-derived depth against the trigger-maintained `depth` and
- * `path`, and returns one divergence per inconsistent row instead of
- * throwing, so the nightly job can report and repair them.
- */
-export async function verifyTreeConsistency(): Promise<TreeDivergence[]> {
-  return prisma.$queryRaw<TreeDivergence[]>`
-    SELECT
-      u.id AS "userId",
-      u.public_code AS "publicCode",
-      concat_ws('; ', remove_nulls(ARRAY[
-        CASE WHEN c.depth IS NULL THEN 'missing self row in user_closure' END,
-        CASE WHEN c.depth IS NOT NULL AND c.depth <> u.depth
-          THEN 'closure depth ' || c.depth || ' <> users.depth ' || u.depth END,
-        CASE WHEN c.depth IS NOT NULL AND nlevel(u.path) - 1 <> u.depth
-          THEN 'path levels ' || (nlevel(u.path) - 1) || ' <> users.depth ' || u.depth END
-      ])) AS reason
-    FROM users u
-    LEFT JOIN user_closure c
-      ON c.descendant_id = u.id AND c.ancestor_id = u.id
-    WHERE c.depth IS NULL
-       OR c.depth <> u.depth
-       OR nlevel(u.path) - 1 <> u.depth
-  `;
-}

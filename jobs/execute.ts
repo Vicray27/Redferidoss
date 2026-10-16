@@ -35,6 +35,7 @@ import {
 } from "../lib/cycles";
 import { formatAmount, parseAmount } from "../lib/money";
 import type { SettingsReader } from "../lib/settings";
+import type { TreeDivergence } from "../lib/tree";
 
 /** The narrower surface a transaction callback receives (D57 pattern). */
 export interface JobTx {
@@ -415,23 +416,195 @@ async function cycleClose({ db, settings, now }: JobRunContext): Promise<JobSumm
   return { cycles: cycles.length, missed, suspended, autoSuspend, threshold };
 }
 
+/**
+ * Divergences between the three redundant structures of the referral tree
+ * (§9 `tree:verify`, A11/A13): `users.path`/`users.depth` and `user_closure`
+ * versus a recursive walk over the canonical `sponsor_id` pointers.
+ *
+ * One round trip computes everything: the down-walk is the ground truth, the
+ * expected closure edges are every ancestor chain of every user (self rows
+ * included), and a user is divergent when it is unreachable from the root, or
+ * its depth/path disagree with the walk, or its closure rows are missing,
+ * stale or carry a wrong depth.
+ */
+function findTreeDivergences(db: JobTx): Promise<TreeDivergence[]> {
+  return db.$queryRaw<TreeDivergence[]>`
+    /* @job:tree-problems */
+    WITH RECURSIVE walk AS (
+      SELECT
+        u.id AS user_id,
+        ARRAY[u.id::text] AS chain,
+        'root'::text AS expected_path,
+        0 AS expected_depth
+      FROM users u
+      WHERE u.sponsor_id IS NULL
+      UNION ALL
+      SELECT
+        c.id,
+        w.chain || c.id::text,
+        w.expected_path || '.' || fn_ltree_label(c.public_code),
+        w.expected_depth + 1
+      FROM users c
+      JOIN walk w ON c.sponsor_id = w.user_id
+    ),
+    expected AS (
+      SELECT
+        w.user_id,
+        w.expected_depth,
+        w.expected_path,
+        (w.chain[g])::uuid AS ancestor_id,
+        w.expected_depth + 1 - g AS depth
+      FROM walk w
+      CROSS JOIN LATERAL generate_series(1, w.expected_depth + 1) AS g
+    ),
+    missing_edges AS (
+      SELECT e.user_id, count(*) AS total
+      FROM expected e
+      LEFT JOIN user_closure cl
+        ON cl.ancestor_id = e.ancestor_id AND cl.descendant_id = e.user_id
+      WHERE cl.ancestor_id IS NULL
+      GROUP BY e.user_id
+    ),
+    stale_edges AS (
+      SELECT cl.descendant_id AS user_id, count(*) AS total
+      FROM user_closure cl
+      LEFT JOIN expected e
+        ON e.user_id = cl.descendant_id AND e.ancestor_id = cl.ancestor_id
+      WHERE e.user_id IS NULL
+      GROUP BY cl.descendant_id
+    ),
+    wrong_depth AS (
+      SELECT e.user_id, count(*) AS total
+      FROM expected e
+      JOIN user_closure cl
+        ON cl.ancestor_id = e.ancestor_id AND cl.descendant_id = e.user_id
+      WHERE cl.depth <> e.depth
+      GROUP BY e.user_id
+    )
+    SELECT
+      u.id AS "userId",
+      u.public_code AS "publicCode",
+      concat_ws('; ',
+        CASE WHEN w.user_id IS NULL
+          THEN 'not reachable from the root via sponsor_id' END,
+        CASE WHEN w.user_id IS NOT NULL AND u.depth <> w.expected_depth
+          THEN 'users.depth ' || u.depth || ' <> expected ' || w.expected_depth END,
+        CASE WHEN w.user_id IS NOT NULL AND u.path::text <> w.expected_path
+          THEN 'users.path ' || u.path::text || ' <> expected ' || w.expected_path END,
+        CASE WHEN m.user_id IS NOT NULL
+          THEN m.total || ' closure edge(s) missing' END,
+        CASE WHEN s.user_id IS NOT NULL
+          THEN s.total || ' closure edge(s) stale' END,
+        CASE WHEN d.user_id IS NOT NULL
+          THEN d.total || ' closure edge(s) with wrong depth' END
+      ) AS reason
+    FROM users u
+    LEFT JOIN walk w          ON w.user_id = u.id
+    LEFT JOIN missing_edges m ON m.user_id = u.id
+    LEFT JOIN stale_edges s   ON s.user_id = u.id
+    LEFT JOIN wrong_depth d   ON d.user_id = u.id
+    WHERE w.user_id IS NULL
+       OR u.depth <> w.expected_depth
+       OR u.path::text <> w.expected_path
+       OR m.user_id IS NOT NULL
+       OR s.user_id IS NOT NULL
+       OR d.user_id IS NOT NULL
+    ORDER BY u.created_at
+  `;
+}
+
+/** Divergences embedded in the audit row: enough to triage, bounded in size. */
+const AUDIT_PROBLEMS_CAP = 50;
+
+/**
+ * `tree:verify` — compares `user_closure`/`path` against the recursion over
+ * `sponsor_id`; on divergence, records the alert (audit + staff notification)
+ * and rebuilds via `fn_tree_rebuild()` (migration 0004), then re-verifies
+ * (§9, D61).
+ *
+ * The re-verify is the honest part: a sponsor chain broken by manual SQL is
+ * unreachable from the walk and cannot be repaired by re-deriving from
+ * pointers, so the summary reports `remaining > 0` instead of pretending.
+ * A concurrent `fn_user_move` racing the rebuild is the one residual window;
+ * the next nightly run converges (the advisory lock cannot block a manual
+ * move, which runs in its own transaction outside the cron).
+ */
+async function treeVerify({ db }: JobRunContext): Promise<JobSummary> {
+  const problems = await findTreeDivergences(db);
+  if (problems.length === 0) {
+    return { problems: 0, repairedUsers: 0, remaining: 0, notified: 0 };
+  }
+
+  const repairRows = await db.$queryRaw<Array<{ fixed: number }>>`
+    /* @job:tree-rebuild */
+    SELECT fn_tree_rebuild() AS fixed
+  `;
+  const repairedUsers = repairRows[0]?.fixed ?? 0;
+
+  const remaining = await findTreeDivergences(db);
+
+  await db.$executeRaw`
+    /* @job:tree-audit */
+    INSERT INTO audit_log (actor_id, action, entity, entity_id, before, after)
+    VALUES (
+      NULL,
+      'tree.verify_repaired',
+      'tree',
+      'structure',
+      ${JSON.stringify({
+        divergences: problems.length,
+        problems: problems.slice(0, AUDIT_PROBLEMS_CAP),
+      })}::jsonb,
+      ${JSON.stringify({ repairedUsers, remaining: remaining.length })}::jsonb
+    )
+  `;
+
+  const body =
+    remaining.length === 0
+      ? `tree:verify encontró ${problems.length} divergencia(s) y reconstruyó la estructura del árbol.`
+      : `tree:verify encontró ${problems.length} divergencia(s); tras reconstruir quedan ${remaining.length} sin resolver (cadena de patrocinadores rota).`;
+  const notified = await db.$executeRaw`
+    /* @job:tree-notify */
+    INSERT INTO notifications (user_id, type, title, body, data)
+    SELECT
+      u.id,
+      'tree.verify_alert',
+      ${"Árbol reconstruido"},
+      ${body},
+      jsonb_build_object('divergences', ${problems.length}, 'remaining', ${remaining.length})
+    FROM users u
+    WHERE u.role IN ('ROOT', 'ADMIN')
+      AND u.status = 'ACTIVE'
+      AND u.deleted_at IS NULL
+  `;
+
+  return {
+    problems: problems.length,
+    repairedUsers,
+    remaining: remaining.length,
+    notified,
+  };
+}
+
 /** Job name -> runner. Only names listed in jobs/index.ts with implemented: true. */
 const RUNNERS: Record<string, JobRunner> = {
   "cycle:ensure": cycleEnsure,
   "cycle:obligations": cycleObligations,
   "cycle:reminders": cycleReminders,
   "cycle:close": cycleClose,
+  "tree:verify": treeVerify,
 };
 
 /**
  * Jobs whose body is a read-decide-write critical section (D41 defers §9's
  * advisory lock to exactly these): two concurrent `cycle:reminders` runs could
  * both read "no report yet" and both insert a notification, and two
- * `cycle:close` runs could interleave a close with a late approval. The
- * guard-only jobs stay out — see the header: a caught 23P01 poisons an open
- * transaction, and their race tolerance depends on autocommit.
+ * `cycle:close` runs could interleave a close with a late approval, and two
+ * `tree:verify` runs could rebuild while the other decides there is nothing to
+ * do. The guard-only jobs stay out — see the header: a caught 23P01 poisons an
+ * open transaction, and their race tolerance depends on autocommit.
  */
-const LOCKED_JOBS = new Set(["cycle:reminders", "cycle:close"]);
+const LOCKED_JOBS = new Set(["cycle:reminders", "cycle:close", "tree:verify"]);
 
 /**
  * Run one implemented job. The route checks the registry before calling, so a

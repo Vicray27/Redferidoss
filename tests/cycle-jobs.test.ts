@@ -37,6 +37,9 @@ class JobFake implements JobDb {
   reminderCycles: Array<{ id: string; periodKey: string; dueAt: Date }> = [];
   closeCycles: Array<{ id: string; periodKey: string; dueAt: Date }> = [];
   suspendRows: Array<{ id: string; missedCount: number }> = [];
+  /** One problems list per `@job:tree-problems` call: before, then after repair. */
+  treeProblemRounds: Array<Array<{ userId: string; publicCode: string; reason: string }>> = [];
+  repairResult: Array<{ fixed: number }> = [{ fixed: 0 }];
   /** What `pg_try_advisory_xact_lock` reports; false = a concurrent run holds it. */
   lockAvailable = true;
 
@@ -61,6 +64,8 @@ class JobFake implements JobDb {
     if (marker === "@job:reminder-cycles") return this.reminderCycles as T;
     if (marker === "@job:close-cycles") return this.closeCycles as T;
     if (marker === "@job:close-suspend") return this.suspendRows as T;
+    if (marker === "@job:tree-problems") return (this.treeProblemRounds.shift() ?? []) as T;
+    if (marker === "@job:tree-rebuild") return this.repairResult as T;
     throw new Error(`Unrouted query in the job fake: ${sql}`);
   }
 }
@@ -487,6 +492,93 @@ describe("matchesReminderDay", () => {
   it("rejects an unknown timezone instead of guessing", () => {
     const at = new Date("2026-10-15T12:00:00.000Z");
     expect(() => matchesReminderDay(at, at, "Foo/Bar", [0])).toThrow(RangeError);
+  });
+});
+
+describe("tree:verify", () => {
+  const DIVERGENCE = {
+    userId: "eeeeeeee-0000-0000-0000-000000000001",
+    publicCode: "AB12",
+    reason: "users.depth 2 <> expected 1; 1 closure edge(s) missing",
+  };
+
+  it("does nothing when the three structures already agree", async () => {
+    const db = new JobFake();
+    db.treeProblemRounds = [[]];
+
+    const summary = await executeJob("tree:verify", context(db));
+
+    expect(summary).toEqual({ problems: 0, repairedUsers: 0, remaining: 0, notified: 0 });
+    expect(db.execCalls).toHaveLength(0);
+    expect(db.queryCalls.map((call) => call.marker)).toEqual(["@job:lock", "@job:tree-problems"]);
+    expect(db.queryCalls[0].values).toEqual(["job:tree:verify"]);
+
+    const [problems] = db.queryCalls.slice(1);
+    expect(problems.sql).toContain("WITH RECURSIVE walk");
+    expect(problems.sql).toContain("fn_ltree_label");
+    expect(problems.sql).toContain("user_closure");
+    expect(problems.sql).toContain("generate_series");
+    expect(problems.sql).toContain("'not reachable from the root via sponsor_id'");
+    expect(problems.sql).toContain("closure edge(s) missing");
+    expect(problems.sql).toContain("closure edge(s) stale");
+    expect(problems.sql).toContain("closure edge(s) with wrong depth");
+  });
+
+  it("records the alert and repairs, then re-verifies inside the same transaction", async () => {
+    const db = new JobFake();
+    db.treeProblemRounds = [[DIVERGENCE], []];
+    db.repairResult = [{ fixed: 2 }];
+    db.execResults = [1, 3]; // audit row, staff notifications
+
+    const summary = await executeJob("tree:verify", context(db));
+
+    expect(summary).toEqual({ problems: 1, repairedUsers: 2, remaining: 0, notified: 3 });
+
+    // Order matters: verify → rebuild → verify again, all under the lock.
+    expect(db.queryCalls.map((call) => call.marker)).toEqual([
+      "@job:lock",
+      "@job:tree-problems",
+      "@job:tree-rebuild",
+      "@job:tree-problems",
+    ]);
+    expect(db.queryCalls[2].sql).toContain("fn_tree_rebuild()");
+
+    expect(db.execCalls.map((call) => call.marker)).toEqual([
+      "@job:tree-audit",
+      "@job:tree-notify",
+    ]);
+
+    const [audit, notify] = db.execCalls;
+    expect(audit.sql).toContain("INSERT INTO audit_log");
+    expect(audit.sql).toContain("NULL");
+    expect(audit.values).toEqual([
+      JSON.stringify({ divergences: 1, problems: [DIVERGENCE] }),
+      JSON.stringify({ repairedUsers: 2, remaining: 0 }),
+    ]);
+
+    expect(notify.sql).toContain("'tree.verify_alert'");
+    expect(notify.sql).toContain("u.role IN ('ROOT', 'ADMIN')");
+    expect(notify.sql).toContain("u.status = 'ACTIVE'");
+    expect(notify.values).toEqual([
+      "Árbol reconstruido",
+      "tree:verify encontró 1 divergencia(s) y reconstruyó la estructura del árbol.",
+      1,
+      0,
+    ]);
+  });
+
+  it("reports what the rebuild could not fix instead of pretending", async () => {
+    const db = new JobFake();
+    db.treeProblemRounds = [[DIVERGENCE], [DIVERGENCE]];
+    db.repairResult = [{ fixed: 0 }];
+    db.execResults = [1, 1];
+
+    const summary = await executeJob("tree:verify", context(db));
+
+    expect(summary).toEqual({ problems: 1, repairedUsers: 0, remaining: 1, notified: 1 });
+    expect(db.execCalls[1].values).toContain(
+      "tree:verify encontró 1 divergencia(s); tras reconstruir quedan 1 sin resolver (cadena de patrocinadores rota).",
+    );
   });
 });
 
