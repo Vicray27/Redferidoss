@@ -18,7 +18,8 @@
     "seed:root": "tsx prisma/seed.ts",
     "seed:demo": "tsx prisma/seed-demo.ts",
     "auth:set-password": "tsx scripts/set-password.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
@@ -45,6 +46,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vitest/coverage-v8": "^3.2.7",
     "autoprefixer": "^10.4.0",
     "postcss": "^8.4.0",
     "prisma": "^6.0.0",

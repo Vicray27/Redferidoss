@@ -1368,3 +1368,32 @@ resuelve hacia lo más configurable (spec §18.7).
   agregado vivo (EXCEPT 0 en ambas direcciones CON datos reales) y re-ejecución
   con totales idénticos. La raíz preexistente de la dev DB
   (victorjoseraymond@gmail.com) conserva su contraseña: no se pudo imprimir.
+
+### D71 - Cobertura F8: umbral global del 80 % en lib/, áreas del §16 al 97–100 % y wrappers de acción delegados al E2E (F8)
+- Contexto: §16 pide "cobertura mínima: 80 % en lib/ (tree, cycles, settings,
+  authz, money)". El baseline medido con `@vitest/coverage-v8` era 76,98 % de
+  líneas, y las dos áreas nombradas con deuda eran `tree` (41,55 %) y
+  `settings` (62,63 %).
+- Decisión: (1) el umbral (80 % en las cuatro métricas) se aplica GLOBALMENTE
+  sobre `lib/**` en `vitest.config.ts`, no por archivo: un umbral por archivo
+  penalizaría igual un módulo de reglas y un wrapper de una línea. El alcance
+  del include es `lib/**/*.ts` porque el mandato nombra `lib/`; rutas y
+  componentes quedan fuera de esta medida. (2) Se cubrieron con tests los
+  huecos de negocio: `lib/tree.ts` y `lib/settings.ts` al 100 % (las áreas
+  nombradas), `lib/password.ts` (verify + ecualizador de tiempo),
+  `lib/register-schema.ts` (la fábrica del mínimo de contraseña),
+  `lib/utils.ts`, `lib/auth/deps.ts`, y la orquestación del camino del dinero
+  y la configuración (`lib/payments-actions.ts`, `lib/settings-actions.ts`).
+  (3) Los wrappers de Server Action restantes (`custom-fields-actions`,
+  `invitations-actions`, `notifications-actions`, `payment-methods-actions`,
+  `weekly-actions`, `auth/actions`, `registration-deps`) quedan SIN tests
+  unitarios a propósito: no contienen reglas (§18: solo orquestan), y su
+  verificación corresponde al E2E de WU5 (invitar → registrar → reportar →
+  aprobar → dashboard) — un unitario de un wrapper con todo mockeado verifica
+  el mock, no el sistema. (4) El umbral queda armado en el script
+  `pnpm test:coverage`: por debajo de 80 el comando falla.
+- Consecuencias: cobertura final 86,21 % de líneas / 91,15 % ramas / 97,63 %
+  funciones (4.502/5.222 líneas); las cinco áreas del §16 en 97,72–100 %
+  (tree 100, cycles 100, settings 100, authz 97,72, money 100); 87 tests
+  nuevos (879 en total). Si un wrapper gana lógica de negocio, el primer test
+  es el que la cubra — y si el número global cae bajo 80, el gate lo detiene.
