@@ -34,7 +34,7 @@ function isSqlLike(value: unknown): value is { sql: string; values: unknown[] } 
 }
 
 class WeeklyFake implements WeeklyReportsDb {
-  readonly calls: Array<{ marker: string; values: unknown[] }> = [];
+  readonly calls: Array<{ marker: string; text: string; values: unknown[] }> = [];
   private readonly handlers = new Map<string, Handler>();
 
   on(marker: string, handler: Handler): this {
@@ -42,7 +42,7 @@ class WeeklyFake implements WeeklyReportsDb {
     return this;
   }
 
-  callsFor(marker: string): Array<{ marker: string; values: unknown[] }> {
+  callsFor(marker: string): Array<{ marker: string; text: string; values: unknown[] }> {
     return this.calls.filter((call) => call.marker === marker);
   }
 
@@ -75,7 +75,7 @@ class WeeklyFake implements WeeklyReportsDb {
     if (!marker) throw new Error(`WeeklyFake: unmarked statement: ${text}`);
     const handler = this.handlers.get(marker);
     if (!handler) throw new Error(`WeeklyFake: no handler for ${marker}`);
-    this.calls.push({ marker, values });
+    this.calls.push({ marker, text, values });
     return (await handler(values)) as T;
   }
 }
@@ -146,6 +146,14 @@ describe("saveReport", () => {
     db.on("cycle-window", () => []);
 
     await expect(service.saveReport(ACTOR, baseInput())).rejects.toMatchObject({ code: "NO_REPORT_WINDOW" });
+  });
+
+  it("excludes a stored CLOSED cycle from the report window (D37/S1)", async () => {
+    const { db, service } = build();
+
+    await service.saveReport(ACTOR, baseInput());
+
+    expect(db.callsFor("cycle-window")[0]!.text).toContain("status <> 'CLOSED'");
   });
 
   it("rejects invalid counters and non-boolean attendance", async () => {

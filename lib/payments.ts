@@ -404,11 +404,13 @@ export function createPaymentsService(
       }
 
       // --- report window: the cycle currently inside [starts_at, due_at) ------
+      // A stored CLOSED is terminal (D37, mirrors isReportable): if an admin
+      // closes a cycle while its window is still open, no report may enter it.
       const cycles = await db.$queryRaw<CycleRow[]>`
         /* @pay:cycle-window */
         SELECT id, period_key, starts_at, ends_at, due_at
         FROM payment_cycles
-        WHERE starts_at <= ${nowDate} AND ${nowDate} < due_at
+        WHERE starts_at <= ${nowDate} AND ${nowDate} < due_at AND status <> 'CLOSED'
         ORDER BY starts_at DESC
         LIMIT 1
       `;

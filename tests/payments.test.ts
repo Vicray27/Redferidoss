@@ -243,6 +243,14 @@ describe("createReport", () => {
     await expect(service.createReport(ACTOR, baseInput())).rejects.toMatchObject({ code: "NO_REPORT_WINDOW" });
   });
 
+  it("excludes a stored CLOSED cycle from the report window (D37/S1)", async () => {
+    const { db, service } = buildService();
+
+    await service.createReport(ACTOR, baseInput());
+
+    expect(db.callsFor("cycle-window")[0]!.text).toContain("status <> 'CLOSED'");
+  });
+
   it("reports a conflict when the member already has a live report for the cycle", async () => {
     const { db, service } = buildService();
     db.on("existing-report", () => [{ id: "report-0" }]);

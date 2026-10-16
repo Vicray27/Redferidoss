@@ -164,10 +164,12 @@ export function createWeeklyReportsService(
   const now = options.now ?? (() => new Date());
 
   const reportableCycle = async (): Promise<CycleRow> => {
+    // A stored CLOSED is terminal (D37, mirrors isReportable): if an admin
+    // closes a cycle while its window is still open, no report may enter it.
     const cycles = await db.$queryRaw<CycleRow[]>`
       /* @weekly:cycle-window */
       SELECT id, period_key FROM payment_cycles
-      WHERE starts_at <= ${now()} AND ${now()} < due_at
+      WHERE starts_at <= ${now()} AND ${now()} < due_at AND status <> 'CLOSED'
       ORDER BY starts_at DESC
       LIMIT 1
     `;
