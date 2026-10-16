@@ -896,3 +896,38 @@ resuelve hacia lo más configurable (spec §18.7).
   reporte histórico nunca pierde su nombre); un código custom fuera del
   vocabulario del ENUM sigue funcionando por D43; y la pantalla de
   administración no puede tocar la base sin pasar por el servicio auditado.
+
+### D56 - Campos personalizados configurables (F6): identidad congelada, sin borrado y un solo motor de validación
+- Contexto: §8.5 pide el CRUD de campos personalizados "con previsualización
+  del formulario". Los valores viven en `custom_field_values` con FK
+  `ON DELETE CASCADE` a `custom_fields`, el código del campo es la clave del
+  formulario (`raw[field.code]`) y el encabezado de exportación, y hasta ahora
+  las reglas de validación vivían enterradas en `lib/registration.ts` (una
+  segunda copia habría derivado). La tabla NO tiene unique sobre `value` (solo
+  el GIN de búsquedas), así que `is_unique` no puede delegarse a la base.
+- Decisión: un solo motor de validación server-side, `lib/custom-fields.ts`
+  (`validateCustomValue`, `collectCustomValues`, `assertCustomValuesUnique`),
+  del que dependen registro, administración y los formularios que vengan.
+  `lib/custom-fields-admin.ts` (solo ROOT/ADMIN; MEMBER 403 genérico sin SQL)
+  fija `entity`, `code` y `type` UNA vez al crear: la edición no los acepta
+  —cambiar el tipo volvería ilegibles los valores históricos— y la salida es
+  desactivar y crear otro. No hay delete: borrar arrastraría el CASCADE sobre
+  datos de miembros; retirar es `is_active = false`. `default_value` es SOLO
+  prefill del formulario (el servidor jamás inventa un valor) y se guarda en la
+  forma canónica que el motor aceptaría (BOOL `"true"` → `true`, DECIMAL como
+  texto exacto); en campos FILE se fuerza sin default y sin unique (un
+  constraint sobre adjuntos opacos no significa nada). `visible_to` es el rol
+  MÍNIMO que ve el campo en las vistas de lectura. `is_unique` se verifica en
+  aplicación antes de insertar los valores (marker `@cf:unique-check`,
+  excluyendo la propia entidad en re-ediciones): la carrera entre dos envíos
+  simultáneos con el mismo valor queda documentada como aceptada — resolverla
+  pediría un índice único funcional sobre el jsonb que hoy no existe. El
+  reordenamiento renumera denso DENTRO de cada entidad, y cada escritura deja
+  una fila de `audit_log` (`custom_field.create|update|reorder`). La pantalla
+  de administración previsualiza cada campo con el MISMO renderer de los
+  formularios (`FieldRenderer`).
+- Consecuencias: registro y futuros formularios validan con las mismas reglas
+  y los mismos mensajes (el prefill nunca puede contradecir a la validación);
+  un campo desactivado desaparece de los formularios pero conserva sus valores;
+  la unicidad es best-effort documentado en vez de una garantía de base; y la
+  pantalla no puede escribir sin pasar por el servicio auditado.

@@ -79,6 +79,11 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
           description="Catálogo de métodos: etiquetas, instrucciones, requisitos y orden."
         />
         <NavCard
+          href="/admin/campos-personalizados"
+          title="Campos personalizados"
+          description="Datos extra de miembros y reportes, con previsualización del formulario."
+        />
+        <NavCard
           href="/admin/configuracion"
           title="Configuración"
           description="Ajustes del sistema con auditoría de cada cambio."
