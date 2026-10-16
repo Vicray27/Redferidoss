@@ -755,8 +755,10 @@ resuelve hacia lo más configurable (spec §18.7).
   6. Incumplidos = reportes PENDING y obligaciones MISSED de la semana;
   7. Usuarios nuevos = altas dentro de la ventana de la semana;
   8. Tamaño de la red = usuarios vivos, el único KPI independiente del periodo
-  (la pregunta es del estado actual). La media móvil de 4 semanas vive en la
-  tarjeta de recaudado como serie de fondo, no como KPI aparte.
+  (la pregunta es del estado actual). El contexto del recaudado es la serie de
+  barras por semana de la ventana elegida (`?semanas=`, D53) — no se calcula
+  una media móvil aparte; un suavizado futuro sería una pregunta nueva, con su
+  propia decisión.
 - Consecuencias: cada número es reproducible desde la base sin decisiones
   ocultas; una tasa de cumplimiento sobre semanas viejas es exacta (la obligación
   es el denominador correcto, no las filas de usuario). `lib/dashboard.ts`
@@ -777,7 +779,8 @@ resuelve hacia lo más configurable (spec §18.7).
   aceptan para campos con `show_in_dashboard`. La tabla pagina server-side
   (`page`/`page_size`, default 50, máximo 200) con `ORDER BY reported_at DESC`.
   La pantalla, el CSV y el XLSX comparten `PAYMENTS_HEADERS + paymentsMatrix`
-  (16 columnas, estado en español, `-` para vacíos); la exportación completa
+  (16 columnas fijas, estado en español, `-` para vacíos; a estas se suma UNA
+  columna por campo de panel desde D57); la exportación completa
   corta en 10 000 filas con un 400 explicativo en vez de truncar en silencio, y
   la exportación de selección valida y deduplica los ids con el mismo tope.
   La columna Usuario enlaza a la ficha de red (`/portal/network/<id>`, visible
@@ -975,3 +978,25 @@ resuelve hacia lo más configurable (spec §18.7).
   campo exactamente qué corregir; la revisión muestra los datos del aporte sin
   una segunda consulta ni conocer los campos; y agregar tipos de campo nuevos
   al formulario de aportes no toca `lib/payments.ts`, solo el motor compartido.
+
+### D58 - F6 frente a §11 y §10.5: rutas en español, Server Actions y sin DELETE al retirar
+- Contexto: §11 nombra las pantallas administrativas en inglés (`settings`,
+  `custom-fields`, `payment-methods`) y §10.5 pide APIs REST
+  (`GET/PUT /api/admin/settings`, el CRUD de `/api/admin/custom-fields` y
+  `/api/admin/payment-methods`). La implementación de F6 siguió el patrón ya
+  decidido en D29 —mutaciones por Server Actions con guard de staff, páginas
+  RSC como cara— y nombres de ruta en español, consistentes con el resto del
+  panel (`/admin/pagos`, `/admin/reportes`, `/admin/revisiones`).
+- Decisión: (1) las rutas definitivas son `/admin/configuracion`,
+  `/admin/campos-personalizados` y `/admin/metodos-pago`; la carpeta inglesa
+  de §11 era un nombre, no un contrato; (2) las mutaciones viven en Server
+  Actions (`lib/settings-actions.ts`, `lib/custom-fields-actions.ts`,
+  `lib/payment-methods-actions.ts`) que ejecutan los MISMOS servicios con
+  guard de staff y auditoría, y revalidan las rutas afectadas — NO se exponen
+  las rutas REST de §10.5, porque un endpoint HTTP paralelo sería una segunda
+  puerta de autorización que puede desincronizarse (D29); (3) tampoco hay
+  DELETE en el retiro: desactivar es el fin de un campo (D56) o de un método
+  (D55).
+- Consecuencias: el contrato observable de la configurabilidad es la pantalla;
+  si un consumidor externo necesita las APIs de §10.5, se agregan como fachadas
+  delgadas sobre estos mismos servicios, con su propia decisión — no antes.

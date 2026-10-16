@@ -68,8 +68,12 @@ export function SettingsForm({
   const allEntries = groups.flatMap((group) => group.entries);
   const dirtyEntries = allEntries.filter((entry) => values[entry.key] !== entry.value);
 
-  const setValue = (key: string, value: string | boolean) =>
+  const setValue = (key: string, value: string | boolean) => {
     setValues((current) => ({ ...current, [key]: value }));
+    // A "saved" message must not survive the next edit: once something is
+    // dirty again, keeping it would claim the screen has no pending changes.
+    setMessage((current) => (current?.kind === "ok" ? null : current));
+  };
 
   const onSave = () => {
     setMessage(null);

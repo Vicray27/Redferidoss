@@ -440,7 +440,7 @@ Al fallar responden el envelope de §10; al responder bien, la exportación es e
 |---|---|
 | `lib/charts.ts` | Geometría pura de las gráficas (barras, línea, mapa de calor): sin React ni DOM, verificable con números (`niceMax`, `heatColor`, `resolveChartWindow`). D49. |
 | `lib/dashboard.ts` | `createDashboardService` (solo staff): `getOverview` (KPIs y series), `getCompliance` (matriz, tope 500), `searchUsers`/`userOption`/catálogos de métodos y campos. Toda la aritmética de dinero en céntimos BigInt. D50/D54. |
-| `lib/payments-admin.ts` | Filtros (`parsePaymentsFilters`), `listPayments`/`exportRows`/`selectedRows` y la matriz de la tabla (cabeceras + celdas) — pantalla, CSV y XLSX comparten esa matriz. Tope de exportación 10.000 filas. D51. |
+| `lib/payments-admin.ts` | Filtros (`parsePaymentsFilters`), `listPayments`/`exportRows`/`selectedRows` y la matriz de la tabla (cabeceras + celdas) — pantalla, CSV y XLSX comparten esa matriz, con una columna extra por campo de panel (D57). Tope de exportación 10.000 filas. D51/D57. |
 | `lib/payments-actions.ts` | Server actions del toolbar (`bulkReviewPaymentsAction`, `reassignPaymentsAction`) sobre `reviewMany`/`reassignReports` de `lib/payments.ts`, con tope de 500 ids por lote. D52. |
 | `components/charts/*` | Los cuatro componentes SVG (barras verticales/horizontales, línea, mapa de calor) que dibujan la geometría de `lib/charts.ts` como componentes de servidor. D49. |
 
@@ -453,3 +453,49 @@ pnpm db:check:drift
 ```
 
 Las decisiones D49–D54 están en `docs/decisiones.md`.
+
+## La configurabilidad (F6)
+
+El panel que evita tocar código para operar: los ajustes de §6, el catálogo de
+métodos de pago y los campos personalizados de §8.5 (D55–D58). Las mutaciones
+son Server Actions sobre servicios con guard de staff (D29); no hay API REST
+paralela (D58).
+
+### Páginas
+
+| Ruta | Qué hace |
+|---|---|
+| `/admin/metodos-pago` | Catálogo de métodos: alta con código inmutable, edición de etiqueta/orden/estado y reordenamiento denso. No hay borrado: desactivar es el retiro (D55). Las etiquetas del catálogo viajan a la semana, la revisión y la planilla. |
+| `/admin/campos-personalizados` | CRUD de campos personalizados por entidad (USER / PAYMENT_REPORT) con previsualización en vivo: la identidad (entidad, código, tipo) queda congelada al crear y desactivar es el único retiro (D56). Los campos de aporte activos alimentan el formulario de la semana, y los marcados `show_in_dashboard` son columnas de `/admin/pagos` y de sus exportaciones (D57). |
+
+### Librerías de la fase
+
+| Archivo | Qué hace |
+|---|---|
+| `lib/custom-fields.ts` | El motor único de campos personalizados: validación/coerción por tipo, recolección de valores (`collectCustomValues`), verificación de unicidad en aplicación y `formatCustomValue` para lectura (D56/D57). |
+| `lib/custom-fields-admin.ts` | Servicio del CRUD admin (solo ROOT/ADMIN): listar/crear/editar/reordenar/desactivar definiciones con auditoría por cambio (D56). |
+| `lib/custom-fields-actions.ts` | Server Actions de la pantalla: guard de staff, ejecuta el servicio y revalida las rutas que muestran campos. |
+| `lib/payment-methods-admin.ts` | Servicio del catálogo (solo ROOT/ADMIN): alta/edición/desactivar/reordenar; `code` inmutable (D55). |
+| `lib/payment-methods-actions.ts` | Server Actions del catálogo: guard de staff, servicio y revalidación de las pantallas que muestran métodos. |
+
+### Guía rápida (operación)
+
+- Crear un campo personalizado: `/admin/campos-personalizados` → "Nuevo campo"
+  → entidad, código (no cambia después) y tipo. Los defaults prellenan los
+  formularios; los campos de aporte activos aparecen en el envío de la semana
+  (D56/D57).
+- Cambiar el límite de referidos u otro ajuste de §6: `/admin/configuracion`;
+  solo viaja lo modificado, cada cambio se audita y el formulario respeta
+  `editable_by`.
+- Retirar un método de pago o un campo: desactivarlo en su pantalla — el
+  histórico queda intacto (D55/D56).
+
+### Verificación local
+
+```sh
+pnpm test        # 688 tests de unidad, sin base de datos
+pnpm typecheck
+pnpm db:check:drift
+```
+
+Las decisiones D55–D58 están en `docs/decisiones.md`.
