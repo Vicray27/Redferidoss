@@ -10,6 +10,7 @@
 
 import type { SessionPayload } from "@/lib/auth/session";
 import { Button } from "@/components/ui/button";
+import { NotificationBadge } from "@/components/notification-badge";
 import { logoutAction } from "@/lib/auth/actions";
 
 const ROLE_LABEL: Record<SessionPayload["role"], string> = {
@@ -39,6 +40,8 @@ export function SessionShell({
           </div>
 
           <div className="flex items-center gap-4">
+            <NotificationBadge session={session} />
+
             <dl className="hidden items-center gap-4 text-xs sm:flex">
               <div className="text-right">
                 <dt className="text-muted-foreground">Rol</dt>

@@ -1004,3 +1004,27 @@ resuelve hacia lo más configurable (spec §18.7).
 - Consecuencias: el contrato observable de la configurabilidad es la pantalla;
   si un consumidor externo necesita las APIs de §10.5, se agregan como fachadas
   delgadas sobre estos mismos servicios, con su propia decisión — no antes.
+
+### D59 - Notificaciones in-app: la tabla 0001 estrena lector, y el recordatorio es solo in-app (F7)
+- Contexto: la tabla `notifications` existe desde 0001 y su único escritor es la
+  revisión de aportes (`payment.reviewed`); no había lector ni interfaz. §9 pide
+  que `cycle:reminders` notifique "email + in-app". El proyecto no tiene
+  proveedor de correo, y agregarlo exige una decisión propia (credenciales,
+  rebotes, plantillas); el operador ve los avisos donde ya trabaja: la sesión.
+- Decisión: (1) los avisos se leen SOLO in-app: badge en `SessionShell` (una
+  consulta al índice parcial `idx_notifications_unread` por página autenticada)
+  e inbox por rol — `/portal/notificaciones` para miembros y
+  `/admin/notificaciones` para staff — con una bandeja compartida
+  (`NotificationsInbox`) sobre el mismo servicio `lib/notifications.ts`. El
+  correo queda como extensión futura del MISMO punto de escritura, no como
+  requisito de la entrega. (2) La propiedad se impone en SQL: toda lectura y
+  toda marca llevan `user_id = <sesión>`; un id ajeno afecta cero filas
+  (`markRead` devuelve filas afectadas, no un booleano de fe). (3) "Marcar
+  leída" es un POST de formulario a Server Actions idempotentes (guard
+  `read_at IS NULL`): el inbox funciona sin JavaScript de cliente y reenviar el
+  formulario no rompe nada. (4) El enlace del badge depende del rol
+  (navegación, no autorización: cada página se guarda sola).
+- Consecuencias: la persona y el staff ven los avisos sin salir de la sesión y
+  sin un proveedor externo que mantener; el día que exista correo se agrega en
+  el escritor (los jobs) sin tocar la bandeja; las filas históricas sin lector
+  se vuelven visibles al primer render del inbox.
