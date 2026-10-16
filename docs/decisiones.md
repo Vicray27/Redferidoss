@@ -646,6 +646,10 @@ resuelve hacia lo más configurable (spec §18.7).
   futuro almacenamiento S3 reemplaza solo esta ruta y `lib/storage.ts`; los
   tests de ruta existentes (`uploads-route`) marcan el patrón para cubrirla si
   hiciera falta.
+- Adenda (F4b): un tercero recibe el MISMO 404 que una clave inexistente — la
+  ruta nunca confirma que un archivo ajeno exista. El 403 queda para acciones
+  sobre cosas visibles; aquí el objeto mismo no se acusa recibo. Cubierto por
+  `tests/uploads-route.test.ts`.
 
 ### D46 - Planilla consolidada (§8.4): qué es una fila, qué suma cada total
 - Contexto: §8.4 pide una "planilla consolidada" por ciclo (persona, nivel,

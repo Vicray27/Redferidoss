@@ -5,7 +5,12 @@
 // way to view a proof, and it is deliberately narrow: the session is required,
 // and the FILE ROW decides who may read it — its owner or any staff member.
 // The key is looked up in `files` first, so a malformed key simply matches no
-// row (404); no path is ever assembled from raw input.
+// row; no path is ever assembled from raw input.
+//
+// A third party gets the SAME 404 as a key that does not exist: the route never
+// confirms that somebody else's file is out there (D45). 403 remains the answer
+// for "you may not act on a thing you can see" elsewhere; here the thing itself
+// must stay unacknowledged.
 //
 // `Cache-Control: private, no-store`: a proof can contain personal bank data
 // and must not sit in a shared cache.
@@ -15,7 +20,6 @@ import { requireApiSession, withApi } from "@/lib/api";
 import { isStaffActor } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
-import { ForbiddenError } from "@/lib/authz";
 import { storage } from "@/lib/storage";
 
 interface FileRow {
@@ -46,7 +50,8 @@ export async function GET(
 
     const actor = { userId: session.userId, role: session.role };
     if (file.owner_id !== session.userId && !isStaffActor(actor)) {
-      throw new ForbiddenError("files:read");
+      // Uniform with the no-row case above: existence itself is not disclosable.
+      throw new NotFoundError("El archivo no existe.");
     }
 
     const bytes = await storage.read(file.key);

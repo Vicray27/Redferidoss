@@ -151,14 +151,14 @@ describe("GET /api/files/[key]", () => {
     expect((await getFile()).status).toBe(200);
   });
 
-  it("refuses a third party with 403 and never reads storage", async () => {
+  it("answers the same 404 to a third party, so existence is not disclosed (D45)", async () => {
     signIn(RATE_USER_ID);
     queryRawMock.mockResolvedValue(fileRow(USER_ID));
 
     const response = await getFile();
 
-    expect(response.status).toBe(403);
-    expect((await response.json()).error.code).toBe("FORBIDDEN");
+    expect(response.status).toBe(404);
+    expect((await response.json()).error.code).toBe("NOT_FOUND");
     expect(readMock).not.toHaveBeenCalled();
   });
 
