@@ -7,8 +7,16 @@
 // trigger (pg_cron, uptime pingers, or an operator), and Docker needs no
 // pg_cron extension. D62 records why the schedule lives in the app process.
 //
-// Guards run in this order, cheapest and safest first:
-//   * edge runtime: the scheduler needs Prisma, which is Node-only here;
+// Next compiles this module for BOTH runtimes (node and edge). The scheduler
+// needs Prisma, which is Node-only, so the dynamic import MUST live inside a
+// POSITIVE `NEXT_RUNTIME === "nodejs"` branch: webpack evaluates that guard
+// per compilation and drops the branch — import included — for the edge
+// build, keeping `pg` and Node builtins out of the edge bundle. A negative
+// guard (`if (NEXT_RUNTIME !== "nodejs") return;` with the import after it)
+// does NOT work: the import stays a reachable top-level statement and still
+// enters the edge module graph.
+//
+// Remaining guards, cheapest and safest first:
 //   * development: `next dev` restarts and HMR can re-evaluate modules, and a
 //     second loop would double-tick; local runs use POST /api/cron/{job};
 //   * build phase: Next evaluates the module graph while building;
@@ -21,16 +29,17 @@
 const SCHEDULER_STARTED_FLAG = "__redReferidosJobsSchedulerStarted";
 
 export async function register(): Promise<void> {
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.NODE_ENV !== "production") return;
-  if (process.env.NEXT_PHASE === "phase-production-build") return;
-  if (process.env.JOBS_SCHEDULER === "off") return;
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    if (process.env.NODE_ENV !== "production") return;
+    if (process.env.NEXT_PHASE === "phase-production-build") return;
+    if (process.env.JOBS_SCHEDULER === "off") return;
 
-  const scope = globalThis as typeof globalThis & { [SCHEDULER_STARTED_FLAG]?: boolean };
-  if (scope[SCHEDULER_STARTED_FLAG]) return;
-  scope[SCHEDULER_STARTED_FLAG] = true;
+    const scope = globalThis as typeof globalThis & { [SCHEDULER_STARTED_FLAG]?: boolean };
+    if (scope[SCHEDULER_STARTED_FLAG]) return;
+    scope[SCHEDULER_STARTED_FLAG] = true;
 
-  const { startScheduler } = await import("./jobs/scheduler");
-  startScheduler();
-  console.log("[jobs] in-process scheduler started; POST /api/cron/{job} stays available (D62)");
+    const { startScheduler } = await import("./jobs/scheduler");
+    startScheduler();
+    console.log("[jobs] in-process scheduler started; POST /api/cron/{job} stays available (D62)");
+  }
 }
