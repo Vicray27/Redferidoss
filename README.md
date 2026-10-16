@@ -98,9 +98,9 @@ Sólo `AUTH_SECRET`. `DATABASE_URL` ya hacía falta para todo lo demás.
 3. `lib/auth/login.ts` busca el usuario por email con `$queryRaw`
    parametrizado y `::citext` (`users.email` es CITEXT y Prisma no lo puede
    tipar, D14), y verifica la contraseña con Argon2id.
-4. Si las credenciales son correctas, se firma un JWT (HS256, 8 h) y se guarda
-   en la cookie `red_session`: `httpOnly`, `sameSite=lax`, `secure` en
-   producción.
+4. Si las credenciales son correctas, se firma un JWT (HS256) con el TTL de
+   `security.session_ttl_hours` (efectivo: 8 h, tope D17/D65) y se guarda en la
+   cookie `red_session`: `httpOnly`, `sameSite=lax`, `secure` en producción.
 5. `middleware.ts` deja pasar `/admin` y `/portal` con sesión válida y
    redirige a `/login` sin ella. Cada página protegida **vuelve a comprobar**
    la sesión en el servidor (`lib/auth/require.ts`): el middleware redirige,
@@ -154,6 +154,55 @@ generado): `users.email`, `users.path`, `invitations.email_target` y
 por email**: vive en `lib/users.ts` (`findByEmail`, `findByPublicCode`), siempre
 parametrizado y con cast `::citext` explícito (D14). `insertUser` en
 `lib/tree.ts` y `prisma/seed.ts` son raw por la misma razón.
+
+### Diagrama ER
+
+```mermaid
+erDiagram
+    User {
+        uuid id PK
+        text publicCode
+        user_role role
+        user_status status
+        int depth
+    }
+    PaymentCycle {
+        uuid id PK
+        text periodKey
+        cycle_status status
+    }
+    PaymentReport {
+        uuid id PK
+        decimal amount
+        report_status status
+    }
+    WeeklyReport {
+        uuid id PK
+        boolean attended
+    }
+    User ||--o{ User : "sponsor (árbol)"
+    User ||--o{ UserClosure : "ancestro/descendiente"
+    User ||--o{ Invitation : "invita"
+    User ||--o{ PaymentReport : "reporta"
+    User ||--o{ CycleObligation : "obligación"
+    User ||--o{ WeeklyReport : "reporta semana"
+    User ||--o{ Notification : "recibe"
+    User ||--o{ Session : "sesión"
+    User ||--o{ PasswordReset : "reset"
+    User ||--o{ StoredFile : "posee"
+    User ||--o{ AuditLog : "actor"
+    User ||--o{ Setting : "actualiza"
+    PaymentCycle ||--o{ PaymentReport : "ciclo"
+    PaymentCycle ||--o{ CycleObligation : "ciclo"
+    PaymentCycle ||--o{ WeeklyReport : "ciclo"
+    PaymentMethod ||--o{ PaymentReport : "método"
+    PaymentReport ||--o| CycleObligation : "cumple"
+    CustomField ||--o{ CustomFieldValue : "valores"
+```
+
+`mv_payment_weekly` (0005) no aparece: es una vista materializada sobre
+`payment_reports`, no una tabla del espejo. `VerificationToken` y `RateLimit`
+tampoco: son tablas sin FK hacia el resto.
 
 **Nunca uses `prisma migrate dev`**: intentaría generar DDL desde el schema y
 perdería ltree, GiST, EXCLUDE y los triggers. Solo `prisma migrate deploy`.
@@ -261,7 +310,7 @@ SELECT migration_name, finished_at IS NOT NULL AS ok FROM _prisma_migrations;
 | `lib/auth/session.ts` | Token JWT HS256 con `jose`, Edge-safe; `AUTH_SECRET` en runtime (D16, D17). |
 | `lib/auth/schema.ts` | `loginSchema` de Zod, compartido por cliente y servidor. |
 | `lib/auth/login.ts` | `authenticate()` sin framework ni DB: sin enumeración y con igualación de tiempos. |
-| `lib/auth/rate-limit.ts` | 8 fallos por 15 min sobre `rate_limits`, ventana fija, clave hasheada (D18). |
+| `lib/auth/rate-limit.ts` | Fallos por 15 min leídos de `security.login_rate_limit_per_15m`, ventana fija, clave hasheada (D18/D64). |
 | `lib/auth/deps.ts` | Une `authenticate()` y el throttle con las implementaciones reales. |
 | `lib/auth/actions.ts` | Server Actions `loginAction` / `logoutAction`. |
 | `lib/auth/require.ts` | La autoridad de acceso en el servidor: `requireSession` / `requireStaffSession`. |
@@ -280,7 +329,7 @@ de referencia.
 
 | Método y ruta | Qué hace | Protección |
 |---|---|---|
-| `POST /api/auth/register` | Registro vía invitación (§8.3): valida, hashea fuera de la transacción, reválida bajo `FOR UPDATE`, crea usuario + obligación + auditoría, emite sesión. | `assertSameOrigin` + throttle por IP (20/h) |
+| `POST /api/auth/register` | Registro vía invitación (§8.3): valida, hashea fuera de la transacción, reválida bajo `FOR UPDATE`, crea usuario + obligación + auditoría, emite sesión. | `assertSameOrigin` + throttle por IP (`security.register_rate_limit_per_hour_per_ip`, D30/D64) |
 | `GET /api/public/invite/[slug]` | Resuelve `/r/{code}` o `/invite/{token}`: patrocinador, cupos, campos del formulario. Sin `emailTarget`. | throttle por IP (60/10 min) |
 | `GET /api/network/children` | Hijos directos paginados por keyset; `parentId` default = uno mismo. | `requireApiSession` + `assertCanViewUser` + `scopeFilter` |
 | `GET /api/network/search` | Búsqueda por nombre o código dentro del alcance del actor. | ídem |
@@ -579,7 +628,7 @@ base descartable y la bandeja de notificaciones con paginación keyset
 | `prisma/migrations/0005_mv_payment_weekly/` | La MV con datos y su índice único, requisito de `REFRESH CONCURRENTLY` (D67). |
 | `lib/mv-refresh.ts` | Refresh best-effort al aprobar + cada 5 min desde el scheduler (D67/D68). |
 | `prisma/seed-demo.ts` | Demo a escala: presets de §15 y escenario de volumen; cumplimiento al 85 % modelado por persona (D70). |
-| `vitest.config.ts` | Umbral global del 80 % de líneas sobre `lib/**` (D71). |
+| `vitest.config.ts` | Umbral global del 80 % en cuatro métricas (líneas, ramas, funciones, statements) sobre `lib/**` (D71). |
 | `playwright.config.ts` + `e2e/` | El viaje de §16 completo contra una base descartable por corrida (D72). |
 | `lib/notifications.ts` | Keyset en `listForUser`: cursor por id, tupla `(created_at, id)` y `LIMIT n+1` (D73). |
 
@@ -587,7 +636,7 @@ base descartable y la bandeja de notificaciones con paginación keyset
 
 ```sh
 pnpm test             # 882 tests de unidad, sin base de datos
-pnpm test:coverage    # umbral 80 % de líneas en lib/** (actual: ~86 %)
+pnpm test:coverage    # umbral 80 % en 4 métricas sobre lib/** (actual: 86,25 % líneas / 91,21 % ramas)
 pnpm test:e2e         # viaje completo en base descartable (detener antes pnpm dev)
 pnpm typecheck
 pnpm db:check:drift
