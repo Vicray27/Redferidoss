@@ -40,7 +40,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
   const dashboard = createDashboardService(prisma, authorization);
   const reports = createReportsService(prisma, authorization);
   const [cycles, currency, resolved] = await Promise.all([
-    reports.listCycles(),
+    reports.listCycles(session),
     settings.getOrThrow<string>("payments.currency"),
     loadOverview(dashboard, session, requestedKey, weeks),
   ]);

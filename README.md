@@ -409,3 +409,47 @@ pnpm db:check:drift
 ```
 
 Las decisiones D46–D48 están en `docs/decisiones.md`.
+
+## El panel de administración (F5)
+
+La portada del staff: los ocho KPIs de la semana (§8.5), cinco gráficas SVG
+dibujadas en el servidor sin dependencias, la tabla maestra de aportes con doce
+filtros, acciones en lote y exportación, y la matriz de cumplimiento
+persona × semana con drill-down (D49–D54).
+
+### Endpoints
+
+| Método y ruta | Qué hace | Protección |
+|---|---|---|
+| `GET /api/payments/export?format=xlsx\|csv&ids=…` | Descarga la tabla maestra: el conjunto filtrado (los mismos filtros de la página) o, si `ids` está presente, EXACTAMENTE esa selección — los filtros se ignoran a propósito y una selección vacía es 400, nunca un fallback silencioso. Tope 10.000 filas. XLSX (write-excel-file, D47) o CSV RFC 4180 con BOM. `format` por defecto `xlsx`; nombre `pagos-YYYY-MM-DD.<ext>`. | `requireApiSession` + guard staff del servicio + `Cache-Control: private, no-store` |
+| `GET /api/payments/users?q=…&limit=…` | Autocompletado de persona para los filtros de árbol: `q` hasta 100 caracteres, `limit` 1..20 (default 10). Responde `{ query, results }`. | `requireApiSession` + guard staff de `dashboard.searchUsers` |
+
+Al fallar responden el envelope de §10; al responder bien, la exportación es el archivo.
+
+### Páginas
+
+| Ruta | Qué hace |
+|---|---|
+| `/admin` | Panel: ocho KPIs de la semana, tira de cinco gráficas (barras, línea, barras horizontales, mapa de calor) y las cinco puertas de navegación. Selectores de semana y ventana (12/26/52); una semana inexistente degrada a la vigente con aviso. |
+| `/admin/pagos` | Tabla maestra: doce filtros GET (semana(s), fechas, estado, persona/subárbol, nivel, método, monto, moneda, con comprobante, texto, campos personalizados), paginación real, selección por página con acciones en lote (aprobar, rechazar con motivo, reasignar semana) y exportación filtrada o de la selección. La URL filtrada es compartible. |
+| `/admin/cumplimiento` | Matriz persona × semana: cuatro estados con leyenda (aprobado / pendiente / incumplido / exento), ventanas 4/12/26 y drill-down por celda a la tabla maestra filtrada por persona y semana. Avisa si la red supera las 500 personas mostradas (D54). |
+
+### Librerías de la fase
+
+| Archivo | Qué hace |
+|---|---|
+| `lib/charts.ts` | Geometría pura de las gráficas (barras, línea, mapa de calor): sin React ni DOM, verificable con números (`niceMax`, `heatColor`, `resolveChartWindow`). D49. |
+| `lib/dashboard.ts` | `createDashboardService` (solo staff): `getOverview` (KPIs y series), `getCompliance` (matriz, tope 500), `searchUsers`/`userOption`/catálogos de métodos y campos. Toda la aritmética de dinero en céntimos BigInt. D50/D54. |
+| `lib/payments-admin.ts` | Filtros (`parsePaymentsFilters`), `listPayments`/`exportRows`/`selectedRows` y la matriz de la tabla (cabeceras + celdas) — pantalla, CSV y XLSX comparten esa matriz. Tope de exportación 10.000 filas. D51. |
+| `lib/payments-actions.ts` | Server actions del toolbar (`bulkReviewPaymentsAction`, `reassignPaymentsAction`) sobre `reviewMany`/`reassignReports` de `lib/payments.ts`, con tope de 500 ids por lote. D52. |
+| `components/charts/*` | Los cuatro componentes SVG (barras verticales/horizontales, línea, mapa de calor) que dibujan la geometría de `lib/charts.ts` como componentes de servidor. D49. |
+
+### Verificación local
+
+```sh
+pnpm test        # 641 tests de unidad, sin base de datos
+pnpm typecheck
+pnpm db:check:drift
+```
+
+Las decisiones D49–D54 están en `docs/decisiones.md`.

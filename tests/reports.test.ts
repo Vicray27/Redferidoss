@@ -245,10 +245,17 @@ function build(rows: unknown[] = ALL_ROWS, overrides: Parameters<typeof makeAuth
 // -----------------------------------------------------------------------------
 
 describe("listCycles", () => {
+  it("refuses a MEMBER before any statement runs (D39)", async () => {
+    const { db, service } = build();
+
+    await expect(service.listCycles(MEMBER)).rejects.toBeInstanceOf(ForbiddenError);
+    expect(db.calls).toHaveLength(0);
+  });
+
   it("lists cycles newest first with the default page size", async () => {
     const { db, service } = build();
 
-    const cycles = await service.listCycles();
+    const cycles = await service.listCycles(STAFF);
 
     expect(cycles).toEqual([CYCLE]);
     expect(db.valuesOf("list-cycles").at(-1)).toBe(52);
@@ -257,11 +264,11 @@ describe("listCycles", () => {
   it("clamps a requested limit into 1..104", async () => {
     const { db, service } = build();
 
-    await service.listCycles({ limit: 500 });
+    await service.listCycles(STAFF, { limit: 500 });
     expect(db.valuesOf("list-cycles").at(-1)).toBe(104);
 
     db.calls.length = 0;
-    await service.listCycles({ limit: 0 });
+    await service.listCycles(STAFF, { limit: 0 });
     expect(db.valuesOf("list-cycles").at(-1)).toBe(1);
   });
 });

@@ -55,7 +55,7 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
   const dashboard = createDashboardService(prisma, authorization);
   const reports = createReportsService(prisma, authorization);
   const [cycles, resolved] = await Promise.all([
-    reports.listCycles(),
+    reports.listCycles(session),
     loadMatrix(dashboard, session, requestedKey, weeks),
   ]);
   const { matrix, notice } = resolved;

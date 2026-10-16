@@ -36,7 +36,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
 
   const reports = createReportsService(prisma, authorization);
   const [cycles, resolved] = await Promise.all([
-    reports.listCycles(),
+    reports.listCycles(session),
     loadSheet(reports, session, requestedKey),
   ]);
   const { sheet, notice } = resolved;

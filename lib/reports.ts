@@ -115,8 +115,11 @@ export interface ConsolidatedSheet {
 }
 
 export interface ReportsService {
-  /** Cycle selector data, newest first. */
-  listCycles(options?: { limit?: number }): Promise<CycleOption[]>;
+  /**
+   * Cycle selector data, newest first. Staff-only (D39): every caller is an
+   * /admin surface, and the guard runs before any statement.
+   */
+  listCycles(actor: SessionActor, options?: { limit?: number }): Promise<CycleOption[]>;
   /** The consolidated sheet of one cycle (default: the current effective one). */
   getConsolidatedSheet(actor: SessionActor, selector?: { periodKey?: string }): Promise<ConsolidatedSheet>;
 }
@@ -458,12 +461,15 @@ export function createReportsService(
     const at = now();
     // The cycle containing `now()` wins (upper bound exclusive, mirroring
     // D37's [starts_at, due_at) window); with none containing it, the newest
-    // cycle already started is the best available sheet.
+    // cycle ALREADY STARTED is the best available sheet — a planned future
+    // window must never shadow it. Same ordering as the dashboard's
+    // @dash:current-cycle, so both services answer with the same week for
+    // the same instant.
     const rows = await db.$queryRaw<CycleOption[]>`
       /* @reports:current-cycle */
       SELECT ${CYCLE_COLUMNS}
       FROM payment_cycles
-      ORDER BY (starts_at <= ${at} AND ${at} < due_at) DESC, starts_at DESC
+      ORDER BY (starts_at <= ${at} AND ${at} < due_at) DESC, (starts_at <= ${at}) DESC, starts_at DESC
       LIMIT 1
     `;
     const cycle = rows[0];
@@ -472,7 +478,8 @@ export function createReportsService(
   };
 
   return {
-    async listCycles(listOptions = {}) {
+    async listCycles(actor, listOptions = {}) {
+      requireStaff(actor);
       const limit = clampLimit(listOptions.limit, DEFAULT_CYCLES_LISTED, MAX_CYCLES_LISTED);
       return db.$queryRaw<CycleOption[]>`
         /* @reports:list-cycles */

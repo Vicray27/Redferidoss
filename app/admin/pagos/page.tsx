@@ -49,7 +49,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
   // The custom-field codes must be known BEFORE parsing: an unknown `cf_x`
   // param is not a filter (D51), and only the database knows the real codes.
   const [cycles, methods, customFields] = await Promise.all([
-    reports.listCycles(),
+    reports.listCycles(session),
     dashboard.listPaymentMethods(session),
     dashboard.listDashboardCustomFields(session),
   ]);
