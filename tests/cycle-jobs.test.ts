@@ -1,15 +1,23 @@
 import { describe, expect, it } from "vitest";
 
-import { executeJob, isExclusionViolation, type JobDb } from "@/jobs/execute";
+import {
+  executeJob,
+  isExclusionViolation,
+  matchesReminderDay,
+  type JobDb,
+  type JobTx,
+} from "@/jobs/execute";
 
 /**
- * The two cycle jobs are the first code that writes payment cycles and
- * obligations on a schedule, so their SQL is asserted directly: a fake raw
+ * The cycle jobs are the first code that writes payment cycles, obligations
+ * and reminders on a schedule, so their SQL is asserted directly: a fake raw
  * client routes on the same `/* @job:... *\/` markers the production
  * statements carry (the pattern tests/network.test.ts established). What must
  * hold: the planned windows are contiguous, inserts are guarded so a second
  * run is a no-op, the amount crosses into NUMERIC(14,2) as a DECIMAL string,
- * and the exempt_root guard is honoured.
+ * the exempt_root guard is honoured, reminders fire only on the configured
+ * local days and never twice per person/cycle/day, and the multi-statement
+ * job holds the advisory lock while the guard-only jobs stay in autocommit.
  */
 
 const MARKER = /\/\* (@job:[\w:-]+) \*\//;
@@ -26,6 +34,13 @@ class JobFake implements JobDb {
   /** One result per `$executeRaw` call, in order: a count, or an Error to throw. */
   execResults: Array<number | Error> = [];
   cycles: Array<{ id: string; periodKey: string }> = [];
+  reminderCycles: Array<{ id: string; periodKey: string; dueAt: Date }> = [];
+  /** What `pg_try_advisory_xact_lock` reports; false = a concurrent run holds it. */
+  lockAvailable = true;
+
+  async $transaction<T>(fn: (tx: JobTx) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
 
   async $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<number> {
     const sql = strings.join("");
@@ -39,7 +54,9 @@ class JobFake implements JobDb {
     const sql = strings.join("");
     const marker = MARKER.exec(sql)?.[1] ?? "unknown";
     this.queryCalls.push({ marker, sql, values });
+    if (marker === "@job:lock") return [{ locked: this.lockAvailable }] as T;
     if (marker === "@job:obligation-cycles") return this.cycles as T;
+    if (marker === "@job:reminder-cycles") return this.reminderCycles as T;
     throw new Error(`Unrouted query in the job fake: ${sql}`);
   }
 }
@@ -51,6 +68,7 @@ const SETTINGS: Record<string, unknown> = {
   "payments.frequency": "WEEKLY",
   "payments.expected_amount": 10,
   "payments.exempt_root": true,
+  "payments.reminder_days_before_due": [1],
 };
 
 function fakeSettings(overrides: Record<string, unknown> = {}) {
@@ -210,11 +228,150 @@ describe("cycle:obligations", () => {
   });
 });
 
+describe("cycle:reminders", () => {
+  /** due_at tomorrow (UTC): exactly one day ahead — the default [1] matches. */
+  const SOON = {
+    id: "bbbbbbbb-0000-0000-0000-000000000001",
+    periodKey: "2026-W42",
+    dueAt: new Date("2026-10-16T12:00:00.000Z"),
+  };
+  /** due_at five days ahead: no configured day matches. */
+  const LATER = {
+    id: "bbbbbbbb-0000-0000-0000-000000000002",
+    periodKey: "2026-W43",
+    dueAt: new Date("2026-10-20T12:00:00.000Z"),
+  };
+
+  it("notifies only on a reminder day, once per person, cycle and local day", async () => {
+    const db = new JobFake();
+    db.reminderCycles = [SOON, LATER];
+    db.execResults = [3];
+
+    const summary = await executeJob("cycle:reminders", context(db));
+
+    expect(summary).toEqual({ candidates: 2, cycles: 1, notified: 3, reminderDays: [1] });
+
+    // The lock comes FIRST: the candidate read and every insert live in the
+    // same transaction that holds it, so a concurrent run cannot interleave.
+    expect(db.queryCalls.map((call) => call.marker)).toEqual([
+      "@job:lock",
+      "@job:reminder-cycles",
+    ]);
+    expect(db.queryCalls[0].sql).toContain("pg_try_advisory_xact_lock(hashtext(");
+    expect(db.queryCalls[0].values).toEqual(["job:cycle:reminders"]);
+
+    const [candidates] = db.queryCalls.slice(1);
+    expect(candidates.sql).toContain("status <> 'CLOSED'");
+    expect(candidates.sql).toContain("due_at >");
+    expect(candidates.sql).toContain("o.status = 'PENDING'");
+    expect(candidates.values).toEqual([NOW]);
+
+    expect(db.execCalls).toHaveLength(1);
+    const [insert] = db.execCalls;
+    expect(insert.marker).toBe("@job:reminder-insert");
+    // The parameters pin the whole dedup key: the audience filters, the
+    // cycleId stored in `data`, and the local date the row was created on.
+    expect(insert.values).toEqual([
+      "Aporte pendiente",
+      "No registramos tu aporte de la semana 2026-W42. Envíalo antes del vencimiento para mantener tu cumplimiento.",
+      SOON.id,
+      "2026-W42",
+      SOON.id,
+      SOON.id,
+      "UTC",
+      "2026-10-15",
+    ]);
+    expect(insert.sql).toContain("u.deleted_at IS NULL");
+    expect(insert.sql).toContain("u.status = 'ACTIVE'");
+    expect(insert.sql).toContain("pr.status <> 'REJECTED'");
+    expect(insert.sql).toContain("n.type = 'cycle.reminder'");
+    expect(insert.sql).toContain("n.data->>'cycleId' = ");
+    expect(insert.sql).toContain("AT TIME ZONE");
+    expect(insert.sql).toContain("jsonb_build_object('cycleId'");
+  });
+
+  it("skips the whole run when another instance already holds the lock", async () => {
+    const db = new JobFake();
+    db.reminderCycles = [SOON];
+    db.lockAvailable = false;
+
+    const summary = await executeJob("cycle:reminders", context(db));
+
+    expect(summary).toEqual({ skipped: true, reason: "LOCK_BUSY" });
+    expect(db.queryCalls).toHaveLength(1); // the lock attempt itself
+    expect(db.execCalls).toHaveLength(0);
+  });
+
+  it("inserts nothing when today is not a reminder day", async () => {
+    const db = new JobFake();
+    db.reminderCycles = [LATER];
+
+    const summary = await executeJob("cycle:reminders", context(db));
+
+    expect(summary).toEqual({ candidates: 1, cycles: 0, notified: 0, reminderDays: [1] });
+    expect(db.execCalls).toHaveLength(0);
+  });
+
+  it("treats an empty reminder list as no reminder days", async () => {
+    const db = new JobFake();
+    db.reminderCycles = [SOON];
+
+    const summary = await executeJob(
+      "cycle:reminders",
+      context(db, { "payments.reminder_days_before_due": [] }),
+    );
+
+    expect(summary).toEqual({ candidates: 1, cycles: 0, notified: 0, reminderDays: [] });
+    expect(db.execCalls).toHaveLength(0);
+  });
+
+  it("leaves the guard-only jobs in autocommit, without the lock", async () => {
+    // Deliberate: a 23P01 caught inside an open transaction would leave it
+    // aborted, and cycle:ensure's race tolerance depends on autocommit.
+    const ensure = new JobFake();
+    await executeJob("cycle:ensure", context(ensure));
+    expect(ensure.queryCalls.filter((call) => call.marker === "@job:lock")).toHaveLength(0);
+
+    const obligations = new JobFake();
+    obligations.cycles = [{ id: "aaaaaaaa-0000-0000-0000-000000000001", periodKey: "2026-W42" }];
+    await executeJob("cycle:obligations", context(obligations));
+    expect(obligations.queryCalls.map((call) => call.marker)).toEqual(["@job:obligation-cycles"]);
+  });
+});
+
+describe("matchesReminderDay", () => {
+  it("compares LOCAL dates, not UTC ones", () => {
+    const now = new Date("2026-10-16T02:30:00.000Z"); // Oct 15 22:30 in Caracas
+    const due = new Date("2026-10-16T12:00:00.000Z"); // Oct 16 08:00 in Caracas
+
+    expect(matchesReminderDay(now, due, "America/Caracas", [1])).toBe(true);
+    // The same instants are Oct 16 -> Oct 16 in UTC: zero days apart.
+    expect(matchesReminderDay(now, due, "UTC", [1])).toBe(false);
+  });
+
+  it("checks membership against every configured day and rejects negatives", () => {
+    const now = new Date("2026-10-15T12:00:00.000Z");
+    const threeAhead = new Date("2026-10-18T12:00:00.000Z");
+    const yesterday = new Date("2026-10-14T12:00:00.000Z");
+
+    expect(matchesReminderDay(now, threeAhead, "UTC", [1, 3])).toBe(true);
+    expect(matchesReminderDay(now, threeAhead, "UTC", [1, 2])).toBe(false);
+    expect(matchesReminderDay(now, yesterday, "UTC", [0, 1])).toBe(false);
+    expect(matchesReminderDay(now, threeAhead, "UTC", [])).toBe(false);
+  });
+
+  it("rejects an unknown timezone instead of guessing", () => {
+    const at = new Date("2026-10-15T12:00:00.000Z");
+    expect(() => matchesReminderDay(at, at, "Foo/Bar", [0])).toThrow(RangeError);
+  });
+});
+
 describe("executeJob", () => {
   it("refuses a name the registry would never dispatch to it", async () => {
     const db = new JobFake();
-    await expect(executeJob("cycle:reminders", context(db))).rejects.toThrow(
-      /No runner registered for job "cycle:reminders"/,
+    await expect(executeJob("cycle:missing", context(db))).rejects.toThrow(
+      /No runner registered for job "cycle:missing"/,
     );
+    expect(db.queryCalls).toHaveLength(0);
   });
 });

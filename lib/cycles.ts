@@ -107,6 +107,29 @@ function zonedToUtc(
   return new Date(instant);
 }
 
+/**
+ * The calendar date of `instant` in `timeZone` as "YYYY-MM-DD" — the local
+ * day, not the UTC day (§9 `cycle:reminders` compares local dates).
+ */
+export function localDateKey(instant: Date, timeZone: string): string {
+  let local: WallClock;
+  try {
+    local = zonedParts(instant, timeZone);
+  } catch {
+    throw new RangeError(`Unknown IANA timezone: "${timeZone}"`);
+  }
+  return `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`;
+}
+
+/** Whole days from one "YYYY-MM-DD" local date key to another (`to - from`). */
+export function daysBetweenLocalDates(from: string, to: string): number {
+  const [fromYear, fromMonth, fromDay] = from.split("-").map(Number);
+  const [toYear, toMonth, toDay] = to.split("-").map(Number);
+  const fromMs = Date.UTC(fromYear, fromMonth - 1, fromDay);
+  const toMs = Date.UTC(toYear, toMonth - 1, toDay);
+  return Math.round((toMs - fromMs) / MS_PER_DAY);
+}
+
 /** ISO-8601 week key ("2026-W41") for a local calendar date. */
 export function isoWeekKey(year: number, month: number, day: number): string {
   const date = new Date(Date.UTC(year, month - 1, day));

@@ -1022,9 +1022,29 @@ resuelve hacia lo más configurable (spec §18.7).
   (`markRead` devuelve filas afectadas, no un booleano de fe). (3) "Marcar
   leída" es un POST de formulario a Server Actions idempotentes (guard
   `read_at IS NULL`): el inbox funciona sin JavaScript de cliente y reenviar el
-  formulario no rompe nada. (4) El enlace del badge depende del rol
-  (navegación, no autorización: cada página se guarda sola).
+  formulario no rompe nada.   (4) El enlace del badge depende del rol
+  (navegación, no autorización: cada página se guarda sola). (5) El primer job
+  multi-statement de F7 es `cycle:reminders`: avisa SOLO a quien no tiene un
+  reporte distinto de REJECTED — un reporte rechazado es historia (D43) y su
+  autor vuelve a ser recordado — en ciclos abiertos con `due_at` futuro y al
+  menos una obligación PENDING; se dispara cuando la fecha local de `due_at`
+  cae exactamente N días después de la fecha local de hoy, con N ∈
+  `payments.reminder_days_before_due` (la distancia se mide en
+  `general.timezone`, jamás en UTC ni en el navegador: R11). El aviso es UNO
+  por persona, ciclo y día local: el INSERT lleva doble `NOT EXISTS` —sin
+  reporte vivo y sin aviso `cycle.reminder` del mismo `cycleId` cuyo
+  `created_at` cae en la fecha local de hoy—, así que reejecutar el job el
+  mismo día no duplica nada. D41 se honra aquí: `executeJob` corre los jobs
+  multi-statement en UNA transacción interactiva cuyo primer statement es
+  `pg_try_advisory_xact_lock(hashtext('job:<nombre>'))`; quien no obtiene el
+  lock responde `{ skipped: true, reason: 'LOCK_BUSY' }` en vez de duplicar.
+  Los jobs guard-only (ensure/obligations) quedan FUERA del wrapper a
+  propósito: su tolerancia a la carrera depende de que cada INSERT corra en
+  autocommit, y un 23P01 capturado dentro de una transacción abierta la
+  dejaría abortada (25P02).
 - Consecuencias: la persona y el staff ven los avisos sin salir de la sesión y
   sin un proveedor externo que mantener; el día que exista correo se agrega en
   el escritor (los jobs) sin tocar la bandeja; las filas históricas sin lector
-  se vuelven visibles al primer render del inbox.
+  se vuelven visibles al primer render del inbox; y re-disparar un job
+  multi-statement es inofensivo por partida doble (dedup en el INSERT y lock
+  transaccional).

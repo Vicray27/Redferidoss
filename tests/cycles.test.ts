@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeCycleBounds,
+  daysBetweenLocalDates,
   effectiveCycleStatus,
   isReportable,
   isoWeekKey,
+  localDateKey,
   planCycles,
   UnsupportedCycleFrequencyError,
 } from "../lib/cycles";
@@ -30,6 +32,36 @@ describe("isoWeekKey", () => {
 
   it("pads the week to two digits", () => {
     expect(isoWeekKey(2026, 10, 12)).toMatch(/^2026-W\d{2}$/);
+  });
+});
+
+describe("localDateKey", () => {
+  it("resolves the LOCAL calendar date, not the UTC one", () => {
+    // 02:30 UTC is still Oct 15 in Caracas (22:30) but already Oct 16 in UTC.
+    const instant = new Date("2026-10-16T02:30:00.000Z");
+    expect(localDateKey(instant, "America/Caracas")).toBe("2026-10-15");
+    expect(localDateKey(instant, "UTC")).toBe("2026-10-16");
+  });
+
+  it("zero-pads month and day", () => {
+    expect(localDateKey(new Date("2026-01-05T12:00:00.000Z"), "UTC")).toBe("2026-01-05");
+  });
+
+  it("rejects an unknown timezone instead of guessing", () => {
+    expect(() => localDateKey(new Date(), "Foo/Bar")).toThrow(RangeError);
+  });
+});
+
+describe("daysBetweenLocalDates", () => {
+  it("counts whole days between date keys, sign included", () => {
+    expect(daysBetweenLocalDates("2026-10-15", "2026-10-16")).toBe(1);
+    expect(daysBetweenLocalDates("2026-10-15", "2026-10-15")).toBe(0);
+    expect(daysBetweenLocalDates("2026-10-16", "2026-10-15")).toBe(-1);
+  });
+
+  it("crosses month and year boundaries", () => {
+    expect(daysBetweenLocalDates("2026-10-31", "2026-11-01")).toBe(1);
+    expect(daysBetweenLocalDates("2026-12-31", "2027-01-01")).toBe(1);
   });
 });
 

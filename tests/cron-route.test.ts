@@ -6,10 +6,10 @@ import { executeJob } from "@/jobs/execute";
 /**
  * The cron endpoint is a security boundary: authentication and lookup happen
  * before any job runs, and an unset CRON_SECRET must disable it rather than
- * open it. F4a makes the two cycle jobs executable, so the happy path is
- * tested against a mocked runner — `executeJob` is the seam; the SQL it emits
- * is asserted in tests/cycle-jobs.test.ts — while every other registered job
- * must still answer the honest 501.
+ * open it. F4a made the two cycle jobs executable and F7 adds the rest one at
+ * a time, so the happy path is tested against a mocked runner — `executeJob`
+ * is the seam; the SQL it emits is asserted in tests/cycle-jobs.test.ts —
+ * while every job still waiting for its body must answer the honest 501.
  */
 
 vi.mock("@/jobs/execute", () => ({ executeJob: vi.fn() }));
@@ -64,7 +64,7 @@ describe("POST /api/cron/{job} — authentication", () => {
   it("accepts the spec's x-cron-secret header as well", async () => {
     // A still-stubbed job proves the header passed authentication without
     // asserting anything about dispatch: the 501 is the honest stage answer.
-    const response = await call("cycle:reminders", { "x-cron-secret": SECRET });
+    const response = await call("cycle:close", { "x-cron-secret": SECRET });
     expect(response.status).toBe(501);
   });
 
@@ -97,13 +97,13 @@ describe("POST /api/cron/{job} — dispatch", () => {
   });
 
   it("answers 501 for a registered but unimplemented job", async () => {
-    const response = await call("cycle:reminders", authorized);
+    const response = await call("cycle:close", authorized);
     expect(response.status).toBe(501);
 
     const body = await response.json();
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("NOT_IMPLEMENTED");
-    expect(body.data.job).toBe("cycle:reminders");
+    expect(body.data.job).toBe("cycle:close");
     expect(body.data.implemented).toBe(false);
     expect(mockExecute).not.toHaveBeenCalled();
   });
@@ -154,12 +154,12 @@ describe("POST /api/cron/{job} — dispatch", () => {
   });
 
   it("is registered for every job the spec lists, each at its own stage", async () => {
-    const stubs = ["cycle:reminders", "cycle:close", "tree:verify", "files:gc"];
+    const stubs = ["cycle:close", "tree:verify", "files:gc"];
     for (const name of stubs) {
       expect((await call(name, authorized)).status, name).toBe(501);
     }
 
-    const implemented = ["cycle:ensure", "cycle:obligations"];
+    const implemented = ["cycle:ensure", "cycle:obligations", "cycle:reminders"];
     for (const name of implemented) {
       expect((await call(name, authorized)).status, name).toBe(200);
     }

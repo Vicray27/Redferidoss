@@ -2,14 +2,16 @@
 // jobs/index.ts — §9 scheduled job registry.
 //
 // Every scheduled task in the spec is registered here so the cron route has a
-// single allow-list to validate `{job}` against. F4a implements the two cycle
-// jobs — their bodies live in jobs/execute.ts, wired to their names there — so
-// the route dispatches them instead of answering 501. The remaining jobs (and
-// the pg_cron scheduling, or the node-cron fallback from D1) land in F7.
+// single allow-list to validate `{job}` against. F4a implemented the first two
+// cycle jobs; F7 is landing the rest one body at a time (cycle:reminders
+// first) — their bodies live in jobs/execute.ts, wired to their names there —
+// so the route dispatches them instead of answering 501. The pg_cron
+// scheduling (or the node-cron fallback from D1) lands with the F7 scheduler.
 //
-// §9: "Idempotentes (usar advisory locks: pg_try_advisory_lock)" — the two
-// implemented jobs are idempotent by construction (guarded INSERTs); D41
-// documents that trade-off and why the advisory lock is F7's concern.
+// §9: "Idempotentes (usar advisory locks: pg_try_advisory_lock)" — the
+// guard-only jobs are idempotent by construction (guarded INSERTs); D41
+// documents why the advisory lock belongs to the multi-statement jobs and how
+// jobs/execute.ts takes it (interactive transaction + xact lock).
 //
 // `implemented: true` is what lets the route hand the name to executeJob;
 // `implemented: false` keeps the honest 501.
@@ -42,7 +44,7 @@ export const JOBS: readonly JobDefinition[] = [
     name: "cycle:reminders",
     description: "Notifies users who have not reported, per payments.reminder_days_before_due.",
     schedule: "daily 09:00 (global timezone)",
-    implemented: false,
+    implemented: true,
   },
   {
     name: "cycle:close",
