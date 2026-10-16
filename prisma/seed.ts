@@ -86,7 +86,7 @@ function toJsonParam(value: CatalogEntry["value"]): string {
  * same alphabet: stable across environments, still 8 chars, and not guessable
  * from "ROOT".
  */
-const BASE32_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford, no I/L/O/U
+export const BASE32_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford, no I/L/O/U
 
 export function derivePublicCode(email: string): string {
   const digest = createHash("sha256").update(email.trim().toLowerCase()).digest();
@@ -139,7 +139,7 @@ async function seedRootUser(client: PrismaClient): Promise<void> {
   console.log(`· root user: created (${email}, public_code ${publicCode})`);
 }
 
-async function seedSettings(client: PrismaClient): Promise<void> {
+export async function seedSettings(client: PrismaClient): Promise<void> {
   for (const entry of SETTINGS_CATALOG) {
     await client.$executeRaw`
       INSERT INTO settings (
@@ -165,7 +165,7 @@ async function seedSettings(client: PrismaClient): Promise<void> {
   console.log(`· settings: ${SETTINGS_CATALOG.length} keys of the §6 catalog ensured`);
 }
 
-async function seedPaymentMethods(client: PrismaClient): Promise<void> {
+export async function seedPaymentMethods(client: PrismaClient): Promise<void> {
   for (const method of PAYMENT_METHODS) {
     await client.$executeRaw`
       INSERT INTO payment_methods (code, label, requires_reference, requires_proof, is_active, sort_order)
@@ -176,7 +176,7 @@ async function seedPaymentMethods(client: PrismaClient): Promise<void> {
   console.log(`· payment_methods: ${PAYMENT_METHODS.length} base methods ensured`);
 }
 
-async function seedCurrentCycle(client: PrismaClient): Promise<void> {
+export async function seedCurrentCycle(client: PrismaClient): Promise<void> {
   // Read the settings that define the window instead of hardcoding them: this
   // is the same rule the app follows, exercised by the seed itself.
   const rows = await client.$queryRaw<Array<{ key: string; value: unknown }>>`

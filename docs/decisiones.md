@@ -1331,3 +1331,40 @@ resuelve hacia lo más configurable (spec §18.7).
 - Consecuencias: cero código nuevo para (1) y (2); la verificación queda como
   evidencia textual en esta decisión y en los tests existentes de network y
   settings.
+
+### D70 - seed:demo: cumplimiento del 85 % modelado sobre la persona, no sobre el reporte (F8)
+- Contexto: §15 pide `pnpm seed:demo --breadth=12 --depth=3 --weeks=8`: árbol
+  completo (12³ → 1.885 usuarios), 8 ciclos semanales pasados con "~85 % de
+  cumplimiento y montos variables", mezcla PENDING/APPROVED/REJECTED con
+  comprobantes, y credenciales de la raíz y de 3 miembros en niveles distintos.
+- Decisión: (1) El ~85 % es el KPI de cumplimiento (obligaciones FULFILLED),
+  así que el sorteo es sobre la PERSONA: 85 % cumple → reporte APPROVED →
+  FULFILLED. El 15 % restante carga la mezcla pedida: 40 % del remanente
+  presenta PENDING, 25 % REJECTED, 35 % nada (MISSED silencioso). Modelarlo al
+  revés (85 % presenta y luego filtrar aprobaciones) daba ~75 % de
+  cumplimiento real — detectado en la verificación contra la DB y corregido.
+  (2) Todo el dataset es determinista (`mulberry32`, semilla fija) salvo las
+  contraseñas: mismos datos en cualquier máquina. (3) Re-ejecución segura:
+  usuarios/ciclos/obligaciones/files con `ON CONFLICT DO NOTHING` y la
+  generación de reportes se salta entera si ya existen reportes demo (las filas
+  REJECTED no tienen constraint parcial que las detenga). (4) Orden de escritura
+  por ciclo: files → reports → obligations, porque
+  `cycle_obligations.fulfilled_report_id` referencia `payment_reports(id)` (un
+  FK 23503 real al invertirlo). (5) Las credenciales impresas son verdaderas:
+  la contraseña de miembros solo se imprime si ESTA ejecución creó miembros
+  (conteo antes/después); en re-ejecución se informa que rige la de la corrida
+  original. (6) Rieles: jamás con `NODE_ENV=production` (sin override),
+  negativa si hay cuentas no-demo además de la raíz salvo `--force` (el flujo
+  fresco `seed:root && seed:demo` funciona sin flag), y la raíz preexistente
+  se reutiliza sin inventarle contraseña. (7) Los comprobantes son metadatos:
+  fila en `files` + `proof_key` válido, sin objeto binario en storage
+  (divergencia documentada; la preview puede 404). (8) `--preset=scale`
+  (6 × 4 → 1.555 usuarios, 5 niveles) queda como escenario A5 para el test de
+  navegador.
+- Consecuencias: la DB dev quedó sembrada (1.884 miembros, 14.235 reportes,
+  15.072 obligaciones, 633 comprobantes; cumplimiento 83,9–85,6 % por ciclo) y
+  verificada en vivo: árbol 12/144/1728 por nivel, FULFILLED ⇔ APPROVED ⇔
+  reviewed_by=raíz sin huérfanos, proof_key ⇔ files sin huérfanos, MV ==
+  agregado vivo (EXCEPT 0 en ambas direcciones CON datos reales) y re-ejecución
+  con totales idénticos. La raíz preexistente de la dev DB
+  (victorjoseraymond@gmail.com) conserva su contraseña: no se pudo imprimir.
