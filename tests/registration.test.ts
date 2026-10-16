@@ -34,6 +34,7 @@ import {
   type RegistrationDeps,
   type RegistrationTx,
 } from "../lib/registration";
+import { UNIQUE_VALUE_MESSAGE } from "../lib/custom-fields";
 import type { SettingsLike } from "../lib/authz";
 
 // ---------------------------------------------------------------------------
@@ -74,6 +75,8 @@ interface FakeCustomField {
   regex: string | null;
   minNumeric: string | null;
   maxNumeric: string | null;
+  isUnique?: boolean;
+  defaultValue?: unknown;
 }
 
 class RegistrationFake {
@@ -237,6 +240,13 @@ class RegistrationFake {
         const [fieldId, entityId, json] = values as [string, string, string];
         this.fieldValues.push({ fieldId, entityId, value: JSON.parse(json) });
         return [];
+      }
+      case "@cf:unique-check": {
+        const [fieldId, json, entityId] = values as [string, string, string];
+        const clash = this.fieldValues.some(
+          (v) => v.fieldId === fieldId && v.entityId !== entityId && JSON.stringify(v.value) === json,
+        );
+        return clash ? [{ entityId: "other-entity" }] : [];
       }
       case "@reg:open-cycle": {
         return this.cycles.length > 0 ? [this.cycles[0]] : [];
@@ -683,6 +693,37 @@ describe("registerUser — custom fields and obligations", () => {
     });
     expect(fake.fieldValues).toHaveLength(0);
     expect(fake.audits).toHaveLength(0);
+  });
+
+  it("rejects a value another entity already holds when the field is unique", async () => {
+    const fake = new RegistrationFake();
+    seedSponsor(fake);
+    fake.customFields = [{ ...FIELDS[0], id: "field-doc", code: "documento", isUnique: true }];
+    fake.fieldValues.push({ fieldId: "field-doc", entityId: "user-existing", value: "1234567" });
+
+    await expect(
+      registerUser({ ...INPUT, custom: { documento: "1234567" } }, {}, makeDeps(fake)),
+    ).rejects.toMatchObject({
+      name: "ValidationError",
+      status: 400,
+      details: { documento: [UNIQUE_VALUE_MESSAGE] },
+    });
+
+    expect(fake.calls.filter((c) => c.marker === "@cf:unique-check")).toHaveLength(1);
+    // The pre-seeded clash is the only row: nothing was inserted before the abort.
+    expect(fake.fieldValues).toHaveLength(1);
+  });
+
+  it("stores a unique value that no other entity holds", async () => {
+    const fake = new RegistrationFake();
+    seedSponsor(fake);
+    fake.customFields = [{ ...FIELDS[0], id: "field-doc", code: "documento", isUnique: true }];
+
+    await registerUser({ ...INPUT, custom: { documento: "7654321" } }, {}, makeDeps(fake));
+
+    expect(fake.fieldValues).toEqual([
+      { fieldId: "field-doc", entityId: "user-2", value: "7654321" },
+    ]);
   });
 
   it("creates the cycle obligation only when a cycle is already OPEN", async () => {

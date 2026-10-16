@@ -28,6 +28,7 @@ function field(overrides: Partial<RegistrationField> & { type: string }): Regist
     minNumeric: null,
     maxNumeric: null,
     sortOrder: 1,
+    defaultValue: null,
     ...overrides,
   };
 }

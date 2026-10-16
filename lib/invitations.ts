@@ -151,6 +151,8 @@ export interface RegistrationField {
   minNumeric: string | null;
   maxNumeric: string | null;
   sortOrder: number;
+  /** Form prefill only (D56); the server never invents a value with it. */
+  defaultValue: unknown;
 }
 
 export interface SponsorInfo {
@@ -278,7 +280,8 @@ export function createInvitationsService(
         regex,
         min_numeric::text AS "minNumeric",
         max_numeric::text AS "maxNumeric",
-        sort_order   AS "sortOrder"
+        sort_order   AS "sortOrder",
+        default_value AS "defaultValue"
       FROM custom_fields
       WHERE entity = 'USER' AND is_active = TRUE AND show_in_registration = TRUE
       ORDER BY sort_order, label

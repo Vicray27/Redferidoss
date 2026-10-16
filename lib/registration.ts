@@ -37,7 +37,12 @@
 import { randomBytes } from "node:crypto";
 
 import { AppError, ValidationError } from "./errors";
-import { collectCustomValues, isValidEmail, type CustomFieldRow } from "./custom-fields";
+import {
+  assertCustomValuesUnique,
+  collectCustomValues,
+  isValidEmail,
+  type CustomFieldRow,
+} from "./custom-fields";
 import {
   MAX_DEPTH_SETTING,
   type InvitationsService,
@@ -330,9 +335,11 @@ export async function registerUser(
         type,
         options,
         is_required AS "isRequired",
+        is_unique AS "isUnique",
         regex,
         min_numeric::text AS "minNumeric",
-        max_numeric::text AS "maxNumeric"
+        max_numeric::text AS "maxNumeric",
+        default_value AS "defaultValue"
       FROM custom_fields
       WHERE entity = 'USER' AND is_active = TRUE AND show_in_registration = TRUE
       ORDER BY sort_order, label
@@ -341,6 +348,9 @@ export async function registerUser(
     if (Object.keys(collected.errors).length > 0) {
       throw new ValidationError("Revisa los campos del formulario.", collected.errors);
     }
+    // is_unique is an application check (D56); run it before writing values so
+    // a clash aborts without partial inserts.
+    await assertCustomValuesUnique(tx, collected.values, inserted.id);
     for (const { field, value } of collected.values) {
       await tx.$queryRaw`
         /* @reg:insert-field-value */

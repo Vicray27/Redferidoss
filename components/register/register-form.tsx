@@ -60,7 +60,18 @@ export function RegisterForm({
   const router = useRouter();
 
   const [formError, setFormError] = useState<string | null>(null);
-  const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
+  // The admin-defined defaults PREFILL the form (D56); the server still
+  // validates whatever is submitted, defaults included.
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>(() =>
+    Object.fromEntries(
+      fields
+        .filter(
+          (field) =>
+            field.type !== "FILE" && field.defaultValue !== null && field.defaultValue !== undefined,
+        )
+        .map((field) => [field.code, field.defaultValue]),
+    ),
+  );
   const [customErrors, setCustomErrors] = useState<Record<string, string>>({});
 
   const {

@@ -89,6 +89,7 @@ const FIELDS_ROW = {
   minNumeric: null,
   maxNumeric: null,
   sortOrder: 10,
+  defaultValue: null,
 };
 
 function happyQuota(children: number, max: number, pending: number) {
