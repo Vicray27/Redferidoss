@@ -718,3 +718,24 @@ resuelve hacia lo más configurable (spec §18.7).
   generación es lo que hace comparables dos impresiones de la misma semana. Un
   reporte semanal del portal (`app/portal/semana`) puede reutilizar esta vista
   más adelante sin agregar librería alguna.
+
+### D49 - Gráficas §8.5: SVG determinista sin librería, geometría pura en lib/charts.ts
+- Contexto: §8.5 pide cinco gráficas (barras por semana con ventana
+  configurable, líneas reportes vs obligaciones, barras horizontales por nivel,
+  Top 10 contribuyentes y patrocinadores, mapa de calor semanas × niveles).
+  Las opciones eran una librería de charts (recharts/visx: cliente, peso en el
+  bundle, hydration y un DOM que no se puede verificar sin navegador) o SVG
+  servido por el servidor.
+- Decisión: SVG generado en el servidor, sin dependencias y sin JavaScript de
+  cliente; la matemática de escalas vive en `lib/charts.ts` como funciones puras
+  (`niceMax`, `verticalBars`, `horizontalBars`, `linePoints`, `heatColor`,
+  `percentLabel`, `resolveChartWindow`) que los tests fijan, y los componentes
+  solo colocan los rects/polilíneas. La ventana temporal de las gráficas
+  semanales es 12/26/52 ciclos (`CHART_WINDOWS`, default 12) anclada en el ciclo
+  seleccionado (el seleccionado es el último punto), persistida en la URL como
+  `semanas=`; un valor desconocido cae al default sin romper la página.
+- Consecuencias: los montos entran a la geometría como `number` solo para
+  dibujar — el valor exacto que se imprime siempre sale de `lib/money.ts`; las
+  gráficas se pueden testear sin DOM y se imprimen/exportan como HTML normal.
+  Si una necesidad futura exige interacción (tooltips ricos, zoom), entra una
+  librería en ese momento y solo para esa gráfica, no antes.
