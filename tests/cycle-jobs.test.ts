@@ -4,6 +4,7 @@ import {
   executeJob,
   isExclusionViolation,
   matchesReminderDay,
+  type JobContext,
   type JobDb,
   type JobTx,
 } from "@/jobs/execute";
@@ -40,6 +41,8 @@ class JobFake implements JobDb {
   /** One problems list per `@job:tree-problems` call: before, then after repair. */
   treeProblemRounds: Array<Array<{ userId: string; publicCode: string; reason: string }>> = [];
   repairResult: Array<{ fixed: number }> = [{ fixed: 0 }];
+  /** Orphans the `files:gc` candidate query returns. */
+  filesCandidates: Array<{ id: string; key: string }> = [];
   /** What `pg_try_advisory_xact_lock` reports; false = a concurrent run holds it. */
   lockAvailable = true;
 
@@ -66,6 +69,7 @@ class JobFake implements JobDb {
     if (marker === "@job:close-suspend") return this.suspendRows as T;
     if (marker === "@job:tree-problems") return (this.treeProblemRounds.shift() ?? []) as T;
     if (marker === "@job:tree-rebuild") return this.repairResult as T;
+    if (marker === "@job:files-gc-candidates") return this.filesCandidates as T;
     throw new Error(`Unrouted query in the job fake: ${sql}`);
   }
 }
@@ -95,8 +99,8 @@ function fakeSettings(overrides: Record<string, unknown> = {}) {
 /** Thursday 2026-10-15 12:00 UTC — the week that opens Monday 2026-10-12 (W42). */
 const NOW = new Date("2026-10-15T12:00:00.000Z");
 
-function context(db: JobFake, overrides?: Record<string, unknown>) {
-  return { db, settings: fakeSettings(overrides), now: NOW };
+function context(db: JobFake, overrides?: Record<string, unknown>, extra: Partial<JobContext> = {}) {
+  return { db, settings: fakeSettings(overrides), now: NOW, ...extra };
 }
 
 function exclusionViolation(): Error {
@@ -579,6 +583,93 @@ describe("tree:verify", () => {
     expect(db.execCalls[1].values).toContain(
       "tree:verify encontró 1 divergencia(s); tras reconstruir quedan 1 sin resolver (cadena de patrocinadores rota).",
     );
+  });
+});
+
+describe("files:gc", () => {
+  const ORPHAN_A = { id: "aaaaaaaa-0000-0000-0000-000000000001", key: "aaaaaaaa-0000-0000-0000-0000000000aa.jpg" };
+  const ORPHAN_B = { id: "bbbbbbbb-0000-0000-0000-000000000002", key: "bbbbbbbb-0000-0000-0000-0000000000bb.pdf" };
+
+  it("removes orphan objects, their rows, and old rate-limit windows", async () => {
+    const db = new JobFake();
+    db.filesCandidates = [ORPHAN_A, ORPHAN_B];
+    db.execResults = [1, 1, 3, 1]; // two row deletes, the trim, the audit
+    const removedKeys: string[] = [];
+
+    const summary = await executeJob(
+      "files:gc",
+      context(db, undefined, {
+        removeObject: async (key) => {
+          removedKeys.push(key);
+        },
+      }),
+    );
+
+    expect(summary).toEqual({ candidates: 2, removed: 2, failed: 0, rateLimits: 3 });
+    // Objects go first: the opposite order would leak them with no row left.
+    expect(removedKeys).toEqual([ORPHAN_A.key, ORPHAN_B.key]);
+    expect(db.execCalls.map((call) => call.marker)).toEqual([
+      "@job:files-gc-delete",
+      "@job:files-gc-delete",
+      "@job:files-gc-rate-limits",
+      "@job:files-gc-audit",
+    ]);
+    expect(db.execCalls[0].values).toEqual([ORPHAN_A.id]);
+    expect(db.execCalls[3].values).toEqual([
+      JSON.stringify({ candidates: 2 }),
+      JSON.stringify({ removed: 2, failed: 0, rateLimits: 3 }),
+    ]);
+  });
+
+  it("age-bounds, reference-guards and caps the candidate query", async () => {
+    const db = new JobFake();
+    db.filesCandidates = [ORPHAN_A];
+    db.execResults = [1, 0, 1];
+
+    await executeJob("files:gc", context(db));
+
+    const [candidates] = db.queryCalls;
+    expect(candidates.marker).toBe("@job:files-gc-candidates");
+    expect(candidates.sql).toContain("interval '24 hours'");
+    expect(candidates.sql).toContain("payment_reports");
+    expect(candidates.sql).toContain("proof_key");
+    expect(candidates.sql).toContain("avatar_key");
+    expect(candidates.sql).toContain("general.logo_key");
+    expect(candidates.sql).toContain("LIMIT 1000");
+  });
+
+  it("keeps the row when its object cannot be removed", async () => {
+    const db = new JobFake();
+    db.filesCandidates = [ORPHAN_A, ORPHAN_B];
+    db.execResults = [1, 0, 1]; // only B's row is deleted; trim 0; audit
+
+    const summary = await executeJob(
+      "files:gc",
+      context(db, undefined, {
+        removeObject: async (key) => {
+          if (key === ORPHAN_A.key) throw new Error("disk unavailable");
+        },
+      }),
+    );
+
+    expect(summary).toEqual({ candidates: 2, removed: 1, failed: 1, rateLimits: 0 });
+    expect(db.execCalls.map((call) => call.marker)).toEqual([
+      "@job:files-gc-delete",
+      "@job:files-gc-rate-limits",
+      "@job:files-gc-audit",
+    ]);
+    expect(db.execCalls[0].values).toEqual([ORPHAN_B.id]);
+  });
+
+  it("writes nothing at all when there is nothing to do", async () => {
+    const db = new JobFake();
+    db.execResults = [0]; // the trim deletes zero old windows
+
+    const summary = await executeJob("files:gc", context(db));
+
+    expect(summary).toEqual({ candidates: 0, removed: 0, failed: 0, rateLimits: 0 });
+    expect(db.execCalls.map((call) => call.marker)).toEqual(["@job:files-gc-rate-limits"]);
+    expect(db.execCalls[0].sql).toContain("interval '7 days'");
   });
 });
 

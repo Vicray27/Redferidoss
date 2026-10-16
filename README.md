@@ -245,8 +245,8 @@ SELECT migration_name, finished_at IS NOT NULL AS ok FROM _prisma_migrations;
 | `prisma/seed.ts` | `pnpm seed:root` — root + catálogo + métodos + ciclo, idempotente. |
 | `lib/cycles.ts` | Ventanas de ciclo en `general.timezone`, sin librería de fechas. |
 | `lib/tree.ts` | Helpers de árbol: label ltree, derivación de path, `fn_user_move`, conteo por nivel. |
-| `app/api/cron/[job]/route.ts` | Contrato `POST /api/cron/{job}`; 501 hasta F7. |
-| `jobs/index.ts` | Registro de los 6 jobs de §9 (contrato, sin implementación). |
+| `app/api/cron/[job]/route.ts` | Contrato `POST /api/cron/{job}`: autenticación con `CRON_SECRET` y envelope §10 (los cuerpos llegan a partir de F4a; la cadencia, en F7). |
+| `jobs/index.ts` | Registro de los 6 jobs de §9 con su `timing` para el scheduler (D62). |
 | `prisma/migrations/0002_settings_notify/` | Trigger que emite `settings_changed`. |
 
 ## Estructura de la autenticación (F2)
@@ -339,7 +339,7 @@ D40 (el miembro ve sólo a sus referidos directos) aplica a todas las lecturas.
 |---|---|---|
 | `POST /api/uploads` | Sube un comprobante (multipart, campo `file`, ≤ 10 MB, JPG/PNG/WEBP/PDF por magic bytes) y devuelve `fileId`/`key` (D42). | sesión + `assertSameOrigin` + throttle 30/10 min por usuario |
 | `GET /api/files/[key]` | Sirve un comprobante guardado en disco; sólo su dueño o staff (D45). | `requireApiSession` + dueño-o-staff + `Cache-Control: private, no-store` |
-| `POST /api/cron/{job}` | `cycle:ensure` y `cycle:obligations` implementados; los otros 4 jobs siguen 501 (D41). | `CRON_SECRET` + mismo-origen |
+| `POST /api/cron/{job}` | F4a: `cycle:ensure` y `cycle:obligations`; F7 completó los 6 (D59–D62) y la cadencia corre en la app — la ruta queda como disparo manual/externo. | `CRON_SECRET` + mismo-origen |
 
 Todos responden el envelope de §10.
 
@@ -360,7 +360,7 @@ Todos responden el envelope de §10.
 | `lib/settings-admin.ts` | Valida contra el catálogo, escribe `settings`, audita cada cambio e invalida la caché local; `@settings:*`. |
 | `lib/storage.ts` / `lib/uploads.ts` | Guardado local en `UPLOADS_DIR`, sniffing de magic bytes y sha256. |
 | `lib/payments-actions.ts`, `lib/weekly-actions.ts`, `lib/settings-actions.ts` | Server Actions de las tres pantallas: traducen `AppError` a mensajes y revalidan; ninguna regla vive ahí. |
-| `jobs/execute.ts` | `cycle:ensure` (planifica 5 ventanas) y `cycle:obligations`, idempotentes por construcción (D41). |
+| `jobs/execute.ts` | `cycle:ensure` (planifica 5 ventanas) y `cycle:obligations`, idempotentes por construcción (D41); F7 sumó los otros cuatro cuerpos (D59–D62). |
 
 ### Verificación local
 
@@ -499,3 +499,54 @@ pnpm db:check:drift
 ```
 
 Las decisiones D55–D58 están en `docs/decisiones.md`.
+
+## Los jobs y las notificaciones (F7)
+
+La bandeja in-app con badge de sesión, los seis jobs de §9 completos y su
+cadencia sin pg_cron (D59–D62). No hay correo ni WhatsApp: §9 los nombra, pero
+el proyecto no tiene proveedor — las notificaciones viven in-app (D59).
+
+### Endpoints
+
+| Método y ruta | Qué hace | Protección |
+|---|---|---|
+| `POST /api/cron/{job}` | Los seis jobs de §9 implementados; disparo manual o externo (la cadencia corre en la app, D62). | `CRON_SECRET` (`Authorization: Bearer` o `x-cron-secret`) |
+
+Cada job responde su resumen en el envelope de §10.
+
+### Páginas
+
+| Ruta | Qué hace |
+|---|---|
+| `/portal/notificaciones` | Bandeja del miembro: no leídas primero, "marcar como leída". |
+| `/admin/notificaciones` | Bandeja del staff, mismo contrato. |
+
+El shell de sesión muestra el badge de no leídas en ambos portales.
+
+### Librerías de la fase
+
+| Archivo | Qué hace |
+|---|---|
+| `lib/notifications.ts` | Lecturas de la bandeja (`@ntf:*`): listado, conteo de no leídas, marcado como leída. |
+| `lib/notifications-actions.ts` | Server Actions de las dos bandejas, con guard por rol. |
+| `jobs/execute.ts` | Los seis cuerpos: `cycle:reminders` (D59), `cycle:close` con strikes y suspensión (D60), `tree:verify` con `fn_tree_rebuild()` (D61), `files:gc` + limpieza de `rate_limits` (D62). Los jobs multi-sentencia toman advisory lock (D41/D59). |
+| `jobs/scheduler.ts` | Cadencia in-process: tick alineado al minuto local en `general.timezone`, orden del registry (ensure → obligations → close) y sin solapamiento (D62). |
+| `instrumentation.ts` | Arranque del scheduler en producción (Node, no build) con kill switch `JOBS_SCHEDULER=off` (D62). |
+| `prisma/migrations/0004_tree_rebuild/` | `fn_tree_rebuild()`: reescribe `users.path/depth` y `user_closure` desde `sponsor_id` (D61). |
+
+### Operación (jobs)
+
+- Correr uno ya: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://…/api/cron/cycle:close`.
+- Apagar la cadencia sin redeploy: `JOBS_SCHEDULER=off`.
+- Cambiar un horario: `timing` en `jobs/index.ts`; la zona horaria sale de `general.timezone`.
+- Migración 0004: `pnpm db:migrate` la aplica (es una función, aditiva).
+
+### Verificación local
+
+```sh
+pnpm test        # 733 tests de unidad, sin base de datos
+pnpm typecheck
+pnpm db:check:drift
+```
+
+Las decisiones D59–D62 están en `docs/decisiones.md`.

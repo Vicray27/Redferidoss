@@ -1149,7 +1149,21 @@ resuelve hacia lo más configurable (spec §18.7).
   cada slot corre N veces; aceptado porque los jobs son idempotentes y toman
   advisory locks (D59), y porque si el proyecto escala, la respuesta es un
   job-runner dedicado, no N schedulers — se documenta aquí para no
-  descubrirlo en producción.
+  descubrirlo en producción. (8) `files:gc` borra objetos huérfanos: filas de
+  `files` con más de 24 h que ninguna referencia usa (`payment_reports` con
+  ese `proof_key`, `users.avatar_key` o el ajuste `general.logo_key`), con
+  tope de 1.000 por corrida — la edad protege el flujo de dos pasos (subir y
+  luego referenciar) y el tope mantiene acotada cada corrida. El orden es
+  objeto primero, fila después: si el borrado de la fila falla, la próxima
+  corrida reintenta un remove que ya es no-op; al revés, el objeto quedaría
+  huérfano sin fila que lo recuerde, y una fila cuyo objeto no se puede
+  borrar se conserva. No entra a `LOCKED_JOBS` (D59): cada paso es
+  remove-if-present + delete-by-id, así que dos corridas concurrentes
+  convergen y no hay invariante que proteger. (9) La limpieza de
+  `rate_limits` salda la deuda que D26 documentó ("las filas viejas se limpian
+  en el job de F7"): las ventanas de más de 7 días se borran en el mismo job,
+  porque nada más lee esa tabla y sólo una ráfaga de fuerza bruta de esa
+  semana podría mirarlas. Una corrida sin nada que hacer no escribe auditoría.
 - Consecuencias: la cadencia se reconfigura en el registry (`timing`); los
   tests del scheduler son herméticos (reloj y timers inyectados); y la ruta
   cron sigue siendo la superficie autenticada para disparos manuales.

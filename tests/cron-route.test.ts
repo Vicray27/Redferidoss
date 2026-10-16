@@ -1,20 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "../app/api/cron/[job]/route";
+import { findJob } from "@/jobs";
 import { executeJob } from "@/jobs/execute";
 
 /**
  * The cron endpoint is a security boundary: authentication and lookup happen
  * before any job runs, and an unset CRON_SECRET must disable it rather than
- * open it. F4a made the two cycle jobs executable and F7 adds the rest one at
- * a time, so the happy path is tested against a mocked runner — `executeJob`
- * is the seam; the SQL it emits is asserted in tests/cycle-jobs.test.ts —
- * while every job still waiting for its body must answer the honest 501.
+ * open it. F7 completed the registry, so the happy path is tested against a
+ * mocked runner — `executeJob` is the seam; the SQL it emits is asserted in
+ * tests/cycle-jobs.test.ts — and the 501 branch is exercised with a synthetic
+ * unimplemented job (future jobs land registry-first again).
  */
 
 vi.mock("@/jobs/execute", () => ({ executeJob: vi.fn() }));
+vi.mock("@/jobs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/jobs")>();
+  return { ...actual, findJob: vi.fn(actual.findJob) };
+});
 
 const mockExecute = vi.mocked(executeJob);
+const mockFindJob = vi.mocked(findJob);
 
 const SECRET = "s3cr3t-cron-token-for-tests";
 
@@ -62,10 +68,10 @@ describe("POST /api/cron/{job} — authentication", () => {
   });
 
   it("accepts the spec's x-cron-secret header as well", async () => {
-    // A still-stubbed job proves the header passed authentication without
-    // asserting anything about dispatch: the 501 is the honest stage answer.
+    // An implemented job proves the header passed authentication AND reached
+    // dispatch; the 501 semantics are covered in the dispatch block.
     const response = await call("files:gc", { "x-cron-secret": SECRET });
-    expect(response.status).toBe(501);
+    expect(response.status).toBe(200);
   });
 
   it("prefers Authorization over x-cron-secret when both are present", async () => {
@@ -97,13 +103,21 @@ describe("POST /api/cron/{job} — dispatch", () => {
   });
 
   it("answers 501 for a registered but unimplemented job", async () => {
-    const response = await call("files:gc", authorized);
+    mockFindJob.mockReturnValueOnce({
+      name: "future:job",
+      description: "Lands registry-first, body later",
+      schedule: "daily 00:00",
+      timing: { kind: "daily", hour: 0, minute: 0 },
+      implemented: false,
+    });
+
+    const response = await call("future:job", authorized);
     expect(response.status).toBe(501);
 
     const body = await response.json();
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("NOT_IMPLEMENTED");
-    expect(body.data.job).toBe("files:gc");
+    expect(body.data.job).toBe("future:job");
     expect(body.data.implemented).toBe(false);
     expect(mockExecute).not.toHaveBeenCalled();
   });
@@ -153,20 +167,16 @@ describe("POST /api/cron/{job} — dispatch", () => {
     logged.mockRestore();
   });
 
-  it("is registered for every job the spec lists, each at its own stage", async () => {
-    const stubs = ["files:gc"];
-    for (const name of stubs) {
-      expect((await call(name, authorized)).status, name).toBe(501);
-    }
-
-    const implemented = [
+  it("serves every job in the spec registry", async () => {
+    const jobs = [
       "cycle:ensure",
       "cycle:obligations",
       "cycle:reminders",
       "cycle:close",
       "tree:verify",
+      "files:gc",
     ];
-    for (const name of implemented) {
+    for (const name of jobs) {
       expect((await call(name, authorized)).status, name).toBe(200);
     }
   });

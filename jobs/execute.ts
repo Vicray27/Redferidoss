@@ -35,6 +35,7 @@ import {
 } from "../lib/cycles";
 import { formatAmount, parseAmount } from "../lib/money";
 import type { SettingsReader } from "../lib/settings";
+import { storage } from "../lib/storage";
 import type { TreeDivergence } from "../lib/tree";
 
 /** The narrower surface a transaction callback receives (D57 pattern). */
@@ -60,6 +61,11 @@ export interface JobContext {
   settings: JobSettings;
   /** Injected so a run is reproducible under test; the route passes new Date(). */
   now: Date;
+  /**
+   * Best-effort object deletion for `files:gc`; defaults to the process-wide
+   * storage driver (D42). Injectable so the gc test never touches the disk.
+   */
+  removeObject?(key: string): Promise<void>;
 }
 
 /** What a runner receives: the context with its transaction-scoped client. */
@@ -586,6 +592,84 @@ async function treeVerify({ db }: JobRunContext): Promise<JobSummary> {
   };
 }
 
+/**
+ * `files:gc` — deletes orphaned uploads and trims old rate-limit windows
+ * (§5.9, §9, D62).
+ *
+ * An orphan is a `files` row older than 24h that no `payment_reports.proof_key`,
+ * `users.avatar_key` or `general.logo_key` setting references. The age window
+ * is what protects the two-step upload flow (POST /api/uploads registers the
+ * row, a later report references the key): a key can only be orphaned if
+ * nobody referenced it for a full day. The batch cap keeps one run bounded —
+ * a weekly job trims steadily instead of holding a transaction for hours.
+ *
+ * Order per file is object first, row second: if the row delete failed after
+ * the object was removed, the next run retries a removal that is already a
+ * no-op — the opposite order would leak the object with no row left to
+ * remember it. A file whose object cannot be removed keeps its row.
+ *
+ * `rate_limits` cleanup is the debt D26 documented ("las filas viejas se
+ * limpian en el job de F7"): fixed windows older than 7 days can only matter
+ * to a brute-force run from that week, and nothing else reads the table.
+ *
+ * Deliberately NOT in LOCKED_JOBS (D59): there is no read-then-write invariant
+ * to protect — every step is remove-if-present plus delete-by-id, so two
+ * concurrent runs converge to the same state. The routine writes nothing at
+ * all when there is nothing to do: a quiet week stays silent in the audit.
+ */
+async function filesGc({ db, removeObject }: JobRunContext): Promise<JobSummary> {
+  const remove = removeObject ?? ((key: string) => storage.remove(key));
+
+  const candidates = await db.$queryRaw<Array<{ id: string; key: string }>>`
+    /* @job:files-gc-candidates */
+    SELECT f.id, f.key
+    FROM files f
+    WHERE f.created_at < now() - interval '24 hours'
+      AND NOT EXISTS (SELECT 1 FROM payment_reports r WHERE r.proof_key = f.key)
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_key = f.key)
+      AND NOT EXISTS (
+        SELECT 1 FROM settings s
+        WHERE s.key = 'general.logo_key' AND s.value #>> '{}' = f.key
+      )
+    ORDER BY f.created_at
+    LIMIT 1000
+  `;
+
+  let removed = 0;
+  let failed = 0;
+  for (const file of candidates) {
+    try {
+      await remove(file.key);
+      await db.$executeRaw`/* @job:files-gc-delete */ DELETE FROM files WHERE id = ${file.id}::uuid`;
+      removed += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  const rateLimits = await db.$executeRaw`
+    /* @job:files-gc-rate-limits */
+    DELETE FROM rate_limits WHERE window_start < now() - interval '7 days'
+  `;
+
+  if (candidates.length > 0 || rateLimits > 0) {
+    await db.$executeRaw`
+      /* @job:files-gc-audit */
+      INSERT INTO audit_log (actor_id, action, entity, entity_id, before, after)
+      VALUES (
+        NULL,
+        'files.gc',
+        'files',
+        'batch',
+        ${JSON.stringify({ candidates: candidates.length })}::jsonb,
+        ${JSON.stringify({ removed, failed, rateLimits })}::jsonb
+      )
+    `;
+  }
+
+  return { candidates: candidates.length, removed, failed, rateLimits };
+}
+
 /** Job name -> runner. Only names listed in jobs/index.ts with implemented: true. */
 const RUNNERS: Record<string, JobRunner> = {
   "cycle:ensure": cycleEnsure,
@@ -593,6 +677,7 @@ const RUNNERS: Record<string, JobRunner> = {
   "cycle:reminders": cycleReminders,
   "cycle:close": cycleClose,
   "tree:verify": treeVerify,
+  "files:gc": filesGc,
 };
 
 /**
@@ -605,6 +690,9 @@ const RUNNERS: Record<string, JobRunner> = {
  * open transaction, and their race tolerance depends on autocommit.
  */
 const LOCKED_JOBS = new Set(["cycle:reminders", "cycle:close", "tree:verify"]);
+// files:gc stays out on purpose: every step is remove-if-present plus
+// delete-by-id, so concurrent runs converge instead of duplicating anything,
+// and holding a transaction across filesystem removals would be worse.
 
 /**
  * Run one implemented job. The route checks the registry before calling, so a

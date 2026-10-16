@@ -2,11 +2,12 @@
 // jobs/index.ts — §9 scheduled job registry.
 //
 // Every scheduled task in the spec is registered here so the cron route has a
-// single allow-list to validate `{job}` against. F4a implemented the first two
-// cycle jobs; F7 is landing the rest one body at a time (cycle:reminders
-// first) — their bodies live in jobs/execute.ts, wired to their names there —
-// so the route dispatches them instead of answering 501. The pg_cron
-// scheduling (or the node-cron fallback from D1) lands with the F7 scheduler.
+// single allow-list to validate `{job}` against. All six bodies live in
+// jobs/execute.ts; the cadence runs in jobs/scheduler.ts, started by
+// instrumentation.ts (D62), and the authenticated route stays as a
+// manual/external trigger. `implemented: true` is what lets the route hand
+// the name to executeJob; `implemented: false` keeps the honest 501 for the
+// next job that lands registry-first.
 //
 // §9: "Idempotentes (usar advisory locks: pg_try_advisory_lock)" — the
 // guard-only jobs are idempotent by construction (guarded INSERTs); D41
@@ -84,7 +85,7 @@ export const JOBS: readonly JobDefinition[] = [
     description: "Deletes orphaned proof objects from S3-compatible storage.",
     schedule: "weekly (Sunday 04:00)",
     timing: { kind: "weekly", weekday: 0, hour: 4, minute: 0 },
-    implemented: false,
+    implemented: true,
   },
 ];
 
