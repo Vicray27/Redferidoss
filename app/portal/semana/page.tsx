@@ -10,8 +10,11 @@ import { createWeeklyReportsService } from "@/lib/weekly-reports";
 import { PaymentForm, type PaymentMethodOption } from "./payment-form";
 import { WeekForm, type WeekDefaults } from "./week-form";
 
-/** Spanish labels for the six `payment_method` enum codes (server-side map:
- * a "use client" module cannot hand a plain object to a server component). */
+/**
+ * Last-resort labels for the six `payment_method` enum codes. Since F6 the
+ * catalog carries its own `label` and order (D55); this map only covers rows
+ * that predate the admin catalog or arrive without one.
+ */
 const METHOD_LABELS: Record<string, string> = {
   TRANSFER: "Transferencia",
   MOBILE: "Pago móvil",
@@ -48,6 +51,7 @@ interface CycleRow {
 interface PaymentMethodRow {
   id: string;
   code: string;
+  label: string;
   requires_reference: boolean;
   requires_proof: boolean;
 }
@@ -70,10 +74,10 @@ export default async function WeekPage() {
       LIMIT 1
     `,
     prisma.$queryRaw<PaymentMethodRow[]>`
-      SELECT id, code, requires_reference, requires_proof
+      SELECT id, code, label, requires_reference, requires_proof
       FROM payment_methods
       WHERE is_active
-      ORDER BY code
+      ORDER BY sort_order, label
     `,
     payments.listMyReports({ id: session.userId, role: session.role }, { limit: 8 }),
     weekly.myReports(actor, { limit: 8 }),
@@ -127,7 +131,7 @@ export default async function WeekPage() {
   const methods: PaymentMethodOption[] = methodRows.map((row) => ({
     id: row.id,
     code: row.code,
-    label: METHOD_LABELS[row.code] ?? row.code,
+    label: row.label.trim() === "" ? (METHOD_LABELS[row.code] ?? row.code) : row.label,
     requiresReference: row.requires_reference,
     requiresProof: row.requires_proof,
   }));

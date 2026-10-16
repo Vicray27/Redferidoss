@@ -510,7 +510,7 @@ export function createReportsService(
                w.cell_new_visitors AS "cellNewVisitors", w.cell_new_cells AS "cellNewCells",
                w.visitors, w.note,
                r.id AS "reportId", r.status::text AS "offeringStatus", r.amount::text AS amount,
-               r.currency, r.method::text AS method, r.paid_at AS "paidAt"
+               r.currency, COALESCE(pm.label, r.method::text) AS method, r.paid_at AS "paidAt"
         FROM users u
         LEFT JOIN users s ON s.id = u.sponsor_id
         LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
@@ -518,8 +518,11 @@ export function createReportsService(
           -- One offering per person: the live report (PENDING/APPROVED) when it
           -- exists — at most one per uq_report_user_cycle (D4) — else the most
           -- recent REJECTED one, which is what the sheet must show as rejected.
-          SELECT r.id, r.status, r.amount, r.currency, r.method, r.paid_at
+          -- The catalog label travels with it (D55): a custom method must never
+          -- read as OTHER in an admin document.
+          SELECT r.id, r.status, r.amount, r.currency, r.method, r.paid_at, pm.label
           FROM payment_reports r
+          LEFT JOIN payment_methods pm ON pm.id = r.method_id
           WHERE r.user_id = u.id AND r.cycle_id = ${cycle.id}::uuid
           ORDER BY (r.status <> 'REJECTED') DESC, r.reported_at DESC
           LIMIT 1

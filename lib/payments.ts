@@ -605,11 +605,12 @@ export function createPaymentsService(
       const limit = clampLimit(listOptions.limit);
       return db.$queryRaw<MyReportRow[]>`
         /* @pay:my-reports */
-        SELECT r.id, r.amount::text AS amount, r.currency, r.method::text AS method, r.status,
+        SELECT r.id, r.amount::text AS amount, r.currency, COALESCE(pm.label, r.method::text) AS method, r.status,
                r.paid_at AS "paidAt", r.reported_at AS "reportedAt", r.review_note AS "reviewNote",
                r.proof_key AS "proofKey", r.cycle_id AS "cycleId", c.period_key AS "periodKey"
         FROM payment_reports r
         JOIN payment_cycles c ON c.id = r.cycle_id
+        LEFT JOIN payment_methods pm ON pm.id = r.method_id
         WHERE r.user_id = ${actor.id}::uuid
         ORDER BY r.reported_at DESC
         LIMIT ${limit}
@@ -626,13 +627,15 @@ export function createPaymentsService(
       const limit = clampLimit(listOptions.limit);
       return db.$queryRaw<ReviewQueueRow[]>`
         /* @pay:review-queue */
-        SELECT r.id, r.amount::text AS amount, r.currency, r.method::text AS method,
+        SELECT r.id, r.amount::text AS amount, r.currency,
+               COALESCE(pm.label, r.method::text) AS method,
                r.paid_at AS "paidAt", r.reported_at AS "reportedAt", r.note, r.proof_key AS "proofKey",
                r.reference, r.user_id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
                r.cycle_id AS "cycleId", c.period_key AS "periodKey"
         FROM payment_reports r
         JOIN users u ON u.id = r.user_id
         JOIN payment_cycles c ON c.id = r.cycle_id
+        LEFT JOIN payment_methods pm ON pm.id = r.method_id
         WHERE r.status = 'PENDING'
           AND (${listOptions.cycleId ?? null}::uuid IS NULL OR r.cycle_id = ${listOptions.cycleId ?? null}::uuid)
         ORDER BY r.reported_at ASC
