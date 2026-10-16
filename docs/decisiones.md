@@ -1048,3 +1048,39 @@ resuelve hacia lo más configurable (spec §18.7).
   se vuelven visibles al primer render del inbox; y re-disparar un job
   multi-statement es inofensivo por partida doble (dedup en el INSERT y lock
   transaccional).
+
+### D60 - cycle:close: strikes derivados de los registros, suspensión como evento y la raíz nunca cae (F7)
+- Contexto: §9 pide que `cycle:close` "marque obligaciones sin reporte
+  aprobado como MISSED, pase el ciclo a CLOSED, acumule strikes y suspenda si
+  `payments.auto_suspend_on_strikes`". La base no tiene columna de contador de
+  strikes (crearla abriría una segunda fuente de verdad frente a
+  `cycle_obligations`), el umbral vive en `payments.missed_grace_strikes`, y la
+  aprobación tardía de un reporte ya revierte la obligación a FULFILLED
+  (`@pay:fulfil-obligation`, WU1 de F7): el "strike" tiene que SER el registro.
+- Decisión: (1) los strikes son DERIVADOS: la suspensión cuenta las
+  obligaciones MISSED del usuario con un `COUNT(*)` — una aprobación tardía lo
+  baja sola y nunca hay un contador que pueda desincronizarse de los registros.
+  (2) La suspensión es un EVENTO del cierre, no un invariante horario: se
+  evalúa solo cuando esta corrida acaba de marcar obligaciones MISSED, y solo
+  sobre esos usuarios (con su conteo TOTAL); un barrido de todos los ACTIVE en
+  cada corrida pelearía para siempre contra una reactivación manual y §9 ata la
+  suspensión a "cerrar un ciclo". (3) `cycle:close` es multi-statement y entra
+  al wrapper del lock transaccional (D59). (4) El orden dentro de la
+  transacción es marcar → cerrar → evaluar → notificar/auditar, con guardas
+  idempotentes (`status = 'PENDING'` al marcar, `status = 'ACTIVE'` al
+  suspender): un reintento tras un fallo a mitad no duplica nada. (5) La raíz
+  JAMÁS se suspende automáticamente: una expulsión automática de la cuenta de
+  control dejaría a la instancia sin su propia administración. (6) Cada
+  suspensión deja UNA notificación `user.suspended` (in-app, D59) y UNA fila de
+  `audit_log` con actor NULL (`user.auto_suspend`, before/after con el conteo y
+  el umbral).
+- Consecuencias: reactivar manualmente a alguien que sigue en el umbral lo
+  deja activo hasta su próximo incumplimiento — el job solo vuelve a evaluarlo
+  cuando un cierre nuevo le marca una obligación MISSED, así que la pregunta
+  "¿por qué sigue suspendido?" se responde mirando sus obligaciones, no un
+  contador; encender `payments.auto_suspend_on_strikes` no suspende
+  retroactivamente a nadie (la evaluación es al cierre, no un barrido
+  histórico); y la sesión ya abierta de un suspendido sobrevive hasta expirar
+  (Auth.js no re-consulta el estado), aceptado para una suspensión por
+  incumplimiento porque el login nuevo sí se bloquea
+  (`ACCOUNT_SUSPENDED_MESSAGE`).

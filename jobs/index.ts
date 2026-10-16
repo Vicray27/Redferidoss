@@ -50,7 +50,7 @@ export const JOBS: readonly JobDefinition[] = [
     name: "cycle:close",
     description: "Marks unfulfilled obligations MISSED, closes the cycle, accrues strikes.",
     schedule: "every hour",
-    implemented: false,
+    implemented: true,
   },
   {
     name: "tree:verify",

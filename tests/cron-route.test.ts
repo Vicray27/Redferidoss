@@ -64,7 +64,7 @@ describe("POST /api/cron/{job} — authentication", () => {
   it("accepts the spec's x-cron-secret header as well", async () => {
     // A still-stubbed job proves the header passed authentication without
     // asserting anything about dispatch: the 501 is the honest stage answer.
-    const response = await call("cycle:close", { "x-cron-secret": SECRET });
+    const response = await call("tree:verify", { "x-cron-secret": SECRET });
     expect(response.status).toBe(501);
   });
 
@@ -97,13 +97,13 @@ describe("POST /api/cron/{job} — dispatch", () => {
   });
 
   it("answers 501 for a registered but unimplemented job", async () => {
-    const response = await call("cycle:close", authorized);
+    const response = await call("tree:verify", authorized);
     expect(response.status).toBe(501);
 
     const body = await response.json();
     expect(body.ok).toBe(false);
     expect(body.error.code).toBe("NOT_IMPLEMENTED");
-    expect(body.data.job).toBe("cycle:close");
+    expect(body.data.job).toBe("tree:verify");
     expect(body.data.implemented).toBe(false);
     expect(mockExecute).not.toHaveBeenCalled();
   });
@@ -154,12 +154,12 @@ describe("POST /api/cron/{job} — dispatch", () => {
   });
 
   it("is registered for every job the spec lists, each at its own stage", async () => {
-    const stubs = ["cycle:close", "tree:verify", "files:gc"];
+    const stubs = ["tree:verify", "files:gc"];
     for (const name of stubs) {
       expect((await call(name, authorized)).status, name).toBe(501);
     }
 
-    const implemented = ["cycle:ensure", "cycle:obligations", "cycle:reminders"];
+    const implemented = ["cycle:ensure", "cycle:obligations", "cycle:reminders", "cycle:close"];
     for (const name of implemented) {
       expect((await call(name, authorized)).status, name).toBe(200);
     }

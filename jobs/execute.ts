@@ -301,21 +301,137 @@ async function cycleReminders({ db, settings, now }: JobRunContext): Promise<Job
   };
 }
 
+interface CloseCycleRow {
+  id: string;
+  periodKey: string;
+  dueAt: Date;
+}
+
+/**
+ * `cycle:close` — past `due_at`, obligations with no approved report become
+ * MISSED and the cycle becomes CLOSED (§9). Strikes are DERIVED, not a counter
+ * (D60): the suspension check counts the user's MISSED obligations, and a late
+ * approval flips the obligation back to FULFILLED (lib/payments.ts), which
+ * clears the strike by itself.
+ *
+ * The auto-suspension only touches users this run just marked MISSED: the spec
+ * ties it to closing a cycle, and evaluating every ACTIVE user on every run
+ * would fight a manual reactivation forever. Every write is idempotent by its
+ * guard (`status = 'PENDING'`, `status = 'ACTIVE'`), so a retry after a crash
+ * between statements resumes cleanly. The root is never auto-suspended: losing
+ * the control account to a job would lock the instance out of its own admin.
+ */
+async function cycleClose({ db, settings, now }: JobRunContext): Promise<JobSummary> {
+  const [autoSuspend, threshold] = await Promise.all([
+    settings.getOrThrow<boolean>("payments.auto_suspend_on_strikes"),
+    settings.getOrThrow<number>("payments.missed_grace_strikes"),
+  ]);
+
+  // §9: "Si now() > due_at". A window past its grace closes exactly once.
+  const cycles = await db.$queryRaw<CloseCycleRow[]>`
+    /* @job:close-cycles */
+    SELECT id, period_key AS "periodKey", due_at AS "dueAt"
+    FROM payment_cycles
+    WHERE status <> 'CLOSED'
+      AND due_at < ${now}::timestamptz
+    ORDER BY starts_at
+  `;
+
+  let missed = 0;
+  for (const cycle of cycles) {
+    // "obligaciones sin reporte aprobado": fulfillment only happens when the
+    // review approves the report, so at close time anything still PENDING is
+    // a miss. MISSED rows already marked are left alone (retry-safe).
+    missed += await db.$executeRaw`
+      /* @job:close-missed */
+      UPDATE cycle_obligations
+      SET status = 'MISSED'
+      WHERE cycle_id = ${cycle.id}::uuid AND status = 'PENDING'
+    `;
+    await db.$executeRaw`
+      /* @job:close-cycle */
+      UPDATE payment_cycles
+      SET status = 'CLOSED'
+      WHERE id = ${cycle.id}::uuid AND status <> 'CLOSED'
+    `;
+  }
+
+  let suspended = 0;
+  if (autoSuspend && cycles.length > 0) {
+    const closedIds = cycles.map((cycle) => cycle.id);
+    const suspendedUsers = await db.$queryRaw<Array<{ id: string; missedCount: number }>>`
+      /* @job:close-suspend */
+      UPDATE users u
+      SET status = 'SUSPENDED'
+      WHERE u.status = 'ACTIVE'
+        AND u.role <> 'ROOT'
+        AND u.deleted_at IS NULL
+        AND u.id IN (
+          SELECT o.user_id
+          FROM cycle_obligations o
+          WHERE o.cycle_id = ANY(${closedIds}::uuid[])
+            AND o.status = 'MISSED'
+        )
+        AND (
+          SELECT COUNT(*)
+          FROM cycle_obligations counted
+          WHERE counted.user_id = u.id AND counted.status = 'MISSED'
+        ) >= ${threshold}
+      RETURNING u.id AS id, (
+        SELECT COUNT(*)::int
+        FROM cycle_obligations o2
+        WHERE o2.user_id = u.id AND o2.status = 'MISSED'
+      ) AS "missedCount"
+    `;
+
+    for (const user of suspendedUsers) {
+      await db.$executeRaw`
+        /* @job:close-notify */
+        INSERT INTO notifications (user_id, type, title, body, data)
+        VALUES (
+          ${user.id}::uuid,
+          'user.suspended',
+          ${"Cuenta suspendida"},
+          ${"No completaste tus aportes de varias semanas y tu cuenta quedó suspendida. Contacta a la administración para reactivarla."},
+          jsonb_build_object('reason', 'missed_grace_strikes', 'missedCount', ${user.missedCount})
+        )
+      `;
+      await db.$executeRaw`
+        /* @job:close-audit */
+        INSERT INTO audit_log (actor_id, action, entity, entity_id, before, after)
+        VALUES (
+          NULL,
+          'user.auto_suspend',
+          'users',
+          ${user.id},
+          ${JSON.stringify({ status: "ACTIVE" })}::jsonb,
+          ${JSON.stringify({ status: "SUSPENDED", missedCount: user.missedCount, threshold })}::jsonb
+        )
+      `;
+    }
+    suspended = suspendedUsers.length;
+  }
+
+  return { cycles: cycles.length, missed, suspended, autoSuspend, threshold };
+}
+
 /** Job name -> runner. Only names listed in jobs/index.ts with implemented: true. */
 const RUNNERS: Record<string, JobRunner> = {
   "cycle:ensure": cycleEnsure,
   "cycle:obligations": cycleObligations,
   "cycle:reminders": cycleReminders,
+  "cycle:close": cycleClose,
 };
 
 /**
  * Jobs whose body is a read-decide-write critical section (D41 defers §9's
  * advisory lock to exactly these): two concurrent `cycle:reminders` runs could
- * both read "no report yet" and both insert a notification. The guard-only
- * jobs stay out — see the header: a caught 23P01 poisons an open transaction,
- * and their race tolerance depends on autocommit.
+ * both read "no report yet" and both insert a notification, and two
+ * `cycle:close` runs could interleave a close with a late approval. The
+ * guard-only jobs stay out — see the header: a caught 23P01 poisons an open
+ * transaction, and their race tolerance depends on autocommit.
  */
-const LOCKED_JOBS = new Set(["cycle:reminders"]);
+const LOCKED_JOBS = new Set(["cycle:reminders", "cycle:close"]);
 
 /**
  * Run one implemented job. The route checks the registry before calling, so a

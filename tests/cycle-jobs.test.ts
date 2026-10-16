@@ -35,6 +35,8 @@ class JobFake implements JobDb {
   execResults: Array<number | Error> = [];
   cycles: Array<{ id: string; periodKey: string }> = [];
   reminderCycles: Array<{ id: string; periodKey: string; dueAt: Date }> = [];
+  closeCycles: Array<{ id: string; periodKey: string; dueAt: Date }> = [];
+  suspendRows: Array<{ id: string; missedCount: number }> = [];
   /** What `pg_try_advisory_xact_lock` reports; false = a concurrent run holds it. */
   lockAvailable = true;
 
@@ -57,6 +59,8 @@ class JobFake implements JobDb {
     if (marker === "@job:lock") return [{ locked: this.lockAvailable }] as T;
     if (marker === "@job:obligation-cycles") return this.cycles as T;
     if (marker === "@job:reminder-cycles") return this.reminderCycles as T;
+    if (marker === "@job:close-cycles") return this.closeCycles as T;
+    if (marker === "@job:close-suspend") return this.suspendRows as T;
     throw new Error(`Unrouted query in the job fake: ${sql}`);
   }
 }
@@ -69,6 +73,8 @@ const SETTINGS: Record<string, unknown> = {
   "payments.expected_amount": 10,
   "payments.exempt_root": true,
   "payments.reminder_days_before_due": [1],
+  "payments.auto_suspend_on_strikes": false,
+  "payments.missed_grace_strikes": 3,
 };
 
 function fakeSettings(overrides: Record<string, unknown> = {}) {
@@ -336,6 +342,124 @@ describe("cycle:reminders", () => {
     obligations.cycles = [{ id: "aaaaaaaa-0000-0000-0000-000000000001", periodKey: "2026-W42" }];
     await executeJob("cycle:obligations", context(obligations));
     expect(obligations.queryCalls.map((call) => call.marker)).toEqual(["@job:obligation-cycles"]);
+  });
+});
+
+describe("cycle:close", () => {
+  const CYCLE_A = {
+    id: "cccccccc-0000-0000-0000-000000000001",
+    periodKey: "2026-W41",
+    dueAt: new Date("2026-10-14T00:00:00.000Z"),
+  };
+  const CYCLE_B = {
+    id: "cccccccc-0000-0000-0000-000000000002",
+    periodKey: "2026-W42",
+    dueAt: new Date("2026-10-14T12:00:00.000Z"),
+  };
+
+  it("marks PENDING obligations MISSED first, then closes each cycle past its grace", async () => {
+    const db = new JobFake();
+    db.closeCycles = [CYCLE_A, CYCLE_B];
+    db.execResults = [2, 0, 1, 0];
+
+    const summary = await executeJob("cycle:close", context(db));
+
+    expect(summary).toEqual({ cycles: 2, missed: 3, suspended: 0, autoSuspend: false, threshold: 3 });
+
+    // Locked job: the advisory lock is the first statement of the shared tx.
+    expect(db.queryCalls[0].marker).toBe("@job:lock");
+    expect(db.queryCalls[0].values).toEqual(["job:cycle:close"]);
+
+    const [candidates] = db.queryCalls.slice(1);
+    expect(candidates.marker).toBe("@job:close-cycles");
+    expect(candidates.sql).toContain("status <> 'CLOSED'");
+    expect(candidates.sql).toContain("due_at < ");
+    expect(candidates.values).toEqual([NOW]);
+
+    // Obligations go MISSED before their cycle closes, per cycle; the cycle
+    // close only happens where it is not already CLOSED.
+    expect(db.execCalls.map((call) => call.marker)).toEqual([
+      "@job:close-missed",
+      "@job:close-cycle",
+      "@job:close-missed",
+      "@job:close-cycle",
+    ]);
+    const [missA, closeA] = db.execCalls;
+    expect(missA.sql).toContain("SET status = 'MISSED'");
+    expect(missA.sql).toContain("status = 'PENDING'");
+    expect(missA.values).toEqual([CYCLE_A.id]);
+    expect(closeA.sql).toContain("SET status = 'CLOSED'");
+    expect(closeA.sql).toContain("status <> 'CLOSED'");
+    expect(closeA.values).toEqual([CYCLE_A.id]);
+    expect(db.execCalls[2].values).toEqual([CYCLE_B.id]);
+
+    // auto_suspend is off: no suspension query at all.
+    expect(db.queryCalls.filter((call) => call.marker === "@job:close-suspend")).toHaveLength(0);
+  });
+
+  it("suspends ACTIVE users at the threshold when auto_suspend_on_strikes is on", async () => {
+    const db = new JobFake();
+    db.closeCycles = [CYCLE_A];
+    db.execResults = [2, 0, 1, 1]; // missed, close, notify, audit
+    db.suspendRows = [{ id: "dddddddd-0000-0000-0000-000000000001", missedCount: 3 }];
+
+    const summary = await executeJob(
+      "cycle:close",
+      context(db, { "payments.auto_suspend_on_strikes": true }),
+    );
+
+    expect(summary).toEqual({ cycles: 1, missed: 2, suspended: 1, autoSuspend: true, threshold: 3 });
+
+    const suspend = db.queryCalls.find((call) => call.marker === "@job:close-suspend");
+    expect(suspend).toBeDefined();
+    expect(suspend!.sql).toContain("SET status = 'SUSPENDED'");
+    expect(suspend!.sql).toContain("u.status = 'ACTIVE'");
+    expect(suspend!.sql).toContain("u.role <> 'ROOT'");
+    expect(suspend!.sql).toContain("o.status = 'MISSED'");
+    expect(suspend!.sql).toContain("RETURNING");
+    // The array pins the cycles closed by THIS run; the threshold comes from
+    // payments.missed_grace_strikes.
+    expect(suspend!.values).toEqual([[CYCLE_A.id], 3]);
+
+    expect(db.execCalls.map((call) => call.marker)).toEqual([
+      "@job:close-missed",
+      "@job:close-cycle",
+      "@job:close-notify",
+      "@job:close-audit",
+    ]);
+
+    const notify = db.execCalls[2];
+    expect(notify.sql).toContain("'user.suspended'");
+    expect(notify.values).toEqual([
+      "dddddddd-0000-0000-0000-000000000001",
+      "Cuenta suspendida",
+      "No completaste tus aportes de varias semanas y tu cuenta quedó suspendida. Contacta a la administración para reactivarla.",
+      3,
+    ]);
+
+    // The audit row has a NULL actor: this was the system, not a person.
+    const audit = db.execCalls[3];
+    expect(audit.sql).toContain("INSERT INTO audit_log");
+    expect(audit.sql).toContain("NULL");
+    expect(audit.values).toEqual([
+      "dddddddd-0000-0000-0000-000000000001",
+      JSON.stringify({ status: "ACTIVE" }),
+      JSON.stringify({ status: "SUSPENDED", missedCount: 3, threshold: 3 }),
+    ]);
+  });
+
+  it("does not check suspension when no cycle closed this run", async () => {
+    const db = new JobFake();
+    db.closeCycles = [];
+
+    const summary = await executeJob(
+      "cycle:close",
+      context(db, { "payments.auto_suspend_on_strikes": true }),
+    );
+
+    expect(summary).toEqual({ cycles: 0, missed: 0, suspended: 0, autoSuspend: true, threshold: 3 });
+    expect(db.execCalls).toHaveLength(0);
+    expect(db.queryCalls.filter((call) => call.marker === "@job:close-suspend")).toHaveLength(0);
   });
 });
 
