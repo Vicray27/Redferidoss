@@ -87,6 +87,46 @@ export interface ReviewedReport {
   cycleId: string;
 }
 
+/** Why one item of a bulk action was skipped (D52). */
+export type BulkReviewSkipReason = "already_reviewed" | "not_found";
+
+export interface BulkReviewSkipped {
+  reportId: string;
+  reason: BulkReviewSkipReason;
+  message: string;
+}
+
+export interface BulkReviewResult {
+  /** Distinct, well-formed ids the action considered. */
+  total: number;
+  approved: number;
+  rejected: number;
+  skipped: BulkReviewSkipped[];
+}
+
+/** Why one item of a cycle reassignment was skipped (D52). */
+export type BulkReassignSkipReason =
+  | "not_found"
+  | "not_pending"
+  | "already_in_target"
+  | "duplicate_in_target";
+
+export interface BulkReassignSkipped {
+  reportId: string;
+  reason: BulkReassignSkipReason;
+  message: string;
+}
+
+export interface BulkReassignResult {
+  total: number;
+  moved: number;
+  skipped: BulkReassignSkipped[];
+  target: { id: string; periodKey: string };
+}
+
+/** §8.5 bulk actions operate on at most this many ids per call (D52). */
+export const BULK_MAX_IDS = 500;
+
 export interface MyReportRow {
   id: string;
   amount: string;
@@ -128,6 +168,10 @@ export interface DownlineOfferingRow {
 export interface PaymentsService {
   createReport(actor: PaymentsActor, input: CreateReportInput): Promise<CreatedReport>;
   reviewReport(actor: PaymentsActor, reportId: string, decision: ReviewDecision, note?: string | null): Promise<ReviewedReport>;
+  /** §8.5 "acciones en lote": approve/reject many at once, per-item results. */
+  reviewMany(actor: PaymentsActor, reportIds: readonly string[], decision: ReviewDecision, note?: string | null): Promise<BulkReviewResult>;
+  /** §8.5 "acciones en lote": move PENDING reports to another cycle. */
+  reassignReports(actor: PaymentsActor, reportIds: readonly string[], targetCycleId: string): Promise<BulkReassignResult>;
   listMyReports(actor: PaymentsActor, options?: { limit?: number }): Promise<MyReportRow[]>;
   /** Staff-only (root cause of S4): the queue exposes amounts and references. */
   listReviewQueue(actor: PaymentsActor, options?: { limit?: number; cycleId?: string }): Promise<ReviewQueueRow[]>;
@@ -144,6 +188,8 @@ const METHOD_ENUM_CODES = ["TRANSFER", "MOBILE", "ZELLE", "CASH", "CRYPTO"] as c
 
 const DEFAULT_LIST_LIMIT = 25;
 const MAX_LIST_LIMIT = 100;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SETTING_KEYS = {
   amountMode: "payments.amount_mode",
@@ -217,6 +263,79 @@ export function createPaymentsService(
       INSERT INTO notifications (user_id, type, title, body, data)
       VALUES (${userId}::uuid, 'payment.reviewed', ${title}, ${body}, ${JSON.stringify({ reportId: input.reportId, cycleId: input.cycleId, status: input.status })}::jsonb)
     `;
+  };
+
+  const requireStaff = (actor: PaymentsActor): void => {
+    if (actor.role !== "ROOT" && actor.role !== "ADMIN") {
+      throw new ForbiddenError("Solo la administración puede revisar aportes.");
+    }
+  };
+
+  const assertDecision: (decision: string) => asserts decision is ReviewDecision = (decision) => {
+    if (decision !== "APPROVED" && decision !== "REJECTED") {
+      throw new ValidationError("La decisión no es válida.", { decision: "Aprueba o rechaza el reporte." });
+    }
+  };
+
+  /**
+   * The single review, exactly as /admin/revisiones always did it. Bulk review
+   * loops THIS: one code path means the audit fields, the obligation sync and
+   * the notification are identical for one item or for five hundred (D52).
+   */
+  const reviewOne = async (
+    actor: PaymentsActor,
+    reportId: string,
+    decision: ReviewDecision,
+    note: string | null,
+  ): Promise<ReviewedReport> => {
+    const reports = await db.$queryRaw<Array<{ id: string; user_id: string; cycle_id: string; status: ReportStatus }>>`
+      /* @pay:report-for-review */
+      SELECT id, user_id, cycle_id, status FROM payment_reports WHERE id = ${reportId}::uuid
+    `;
+    const report = reports[0];
+    if (!report) {
+      throw new NotFoundError("No se encontró el reporte.");
+    }
+    if (report.status !== "PENDING") {
+      throw new ConflictError("Este reporte ya fue revisado.", "REPORT_ALREADY_REVIEWED");
+    }
+
+    const reviewNote = note?.trim() ? note.trim() : null;
+    if (decision === "REJECTED" && reviewNote === null) {
+      throw new ValidationError("Indica el motivo del rechazo.", { reviewNote: "Escribe el motivo para que la persona pueda corregir." });
+    }
+
+    const updated = await db.$queryRaw<Array<{ id: string; user_id: string; cycle_id: string }>>`
+      /* @pay:review-update */
+      UPDATE payment_reports
+      SET status = ${decision}::report_status, reviewed_by = ${actor.id}::uuid, reviewed_at = now(), review_note = ${reviewNote}
+      WHERE id = ${reportId}::uuid AND status = 'PENDING'
+      RETURNING id, user_id, cycle_id
+    `;
+    const reviewed = updated[0];
+    if (!reviewed) {
+      // Lost the race against another reviewer between SELECT and UPDATE.
+      throw new ConflictError("Este reporte ya fue revisado.", "REPORT_ALREADY_REVIEWED");
+    }
+
+    if (decision === "APPROVED") {
+      await fulfilObligation(reviewed.cycle_id, reviewed.user_id, reviewed.id);
+    }
+    await notifyReview(reviewed.user_id, { reportId: reviewed.id, cycleId: reviewed.cycle_id, status: decision, note: reviewNote });
+
+    return { id: reviewed.id, status: decision, userId: reviewed.user_id, cycleId: reviewed.cycle_id };
+  };
+
+  const uniqueIds = (raw: readonly string[]): string[] => [...new Set(raw)];
+
+  const assertBulkIds = (ids: readonly string[]): string[] => {
+    if (ids.length === 0) {
+      throw new ValidationError("No seleccionaste ningún aporte.");
+    }
+    if (ids.length > BULK_MAX_IDS) {
+      throw new ValidationError(`Puedes procesar hasta ${BULK_MAX_IDS} aportes a la vez.`);
+    }
+    return uniqueIds(ids);
   };
 
   return {
@@ -368,49 +487,118 @@ export function createPaymentsService(
     },
 
     async reviewReport(actor, reportId, decision, note) {
-      if (actor.role !== "ROOT" && actor.role !== "ADMIN") {
-        throw new ForbiddenError("Solo la administración puede revisar aportes.");
-      }
-      if (decision !== "APPROVED" && decision !== "REJECTED") {
-        throw new ValidationError("La decisión no es válida.", { decision: "Aprueba o rechaza el reporte." });
-      }
+      requireStaff(actor);
+      assertDecision(decision);
+      return reviewOne(actor, reportId, decision, note ?? null);
+    },
 
-      const reports = await db.$queryRaw<Array<{ id: string; user_id: string; cycle_id: string; status: ReportStatus }>>`
-        /* @pay:report-for-review */
-        SELECT id, user_id, cycle_id, status FROM payment_reports WHERE id = ${reportId}::uuid
-      `;
-      const report = reports[0];
-      if (!report) {
-        throw new NotFoundError("No se encontró el reporte.");
-      }
-      if (report.status !== "PENDING") {
-        throw new ConflictError("Este reporte ya fue revisado.", "REPORT_ALREADY_REVIEWED");
-      }
+    async reviewMany(actor, reportIds, decision, note) {
+      requireStaff(actor);
+      assertDecision(decision);
 
       const reviewNote = note?.trim() ? note.trim() : null;
+      // One shared reason: a rejection without it is a form error, not five
+      // hundred per-item failures.
       if (decision === "REJECTED" && reviewNote === null) {
         throw new ValidationError("Indica el motivo del rechazo.", { reviewNote: "Escribe el motivo para que la persona pueda corregir." });
       }
 
-      const updated = await db.$queryRaw<Array<{ id: string; user_id: string; cycle_id: string }>>`
-        /* @pay:review-update */
-        UPDATE payment_reports
-        SET status = ${decision}::report_status, reviewed_by = ${actor.id}::uuid, reviewed_at = now(), review_note = ${reviewNote}
-        WHERE id = ${reportId}::uuid AND status = 'PENDING'
-        RETURNING id, user_id, cycle_id
+      const ids = assertBulkIds(reportIds);
+      const skipped: BulkReviewSkipped[] = [];
+      let approved = 0;
+      let rejected = 0;
+
+      // Sequential on purpose (D52): per-item isolation with bounded load.
+      for (const reportId of ids) {
+        if (!UUID_RE.test(reportId)) {
+          skipped.push({ reportId, reason: "not_found", message: "No se encontró el reporte." });
+          continue;
+        }
+        try {
+          const reviewed = await reviewOne(actor, reportId, decision, reviewNote);
+          if (reviewed.status === "APPROVED") approved += 1;
+          else rejected += 1;
+        } catch (error) {
+          if (error instanceof ConflictError) {
+            skipped.push({ reportId, reason: "already_reviewed", message: error.message });
+            continue;
+          }
+          if (error instanceof NotFoundError) {
+            skipped.push({ reportId, reason: "not_found", message: error.message });
+            continue;
+          }
+          // Anything else is a real failure: abort the batch, report the cause.
+          throw error;
+        }
+      }
+
+      return { total: ids.length, approved, rejected, skipped };
+    },
+
+    async reassignReports(actor, reportIds, targetCycleId) {
+      // Moving a report between weeks is a ledger correction: staff only.
+      requireStaff(actor);
+      if (!UUID_RE.test(targetCycleId)) {
+        throw new ValidationError("La semana destino no es válida.", { targetCycleId: "Selecciona una semana." });
+      }
+
+      const cycles = await db.$queryRaw<Array<{ id: string; period_key: string }>>`
+        /* @pay:cycle-target */
+        SELECT id, period_key FROM payment_cycles WHERE id = ${targetCycleId}::uuid
       `;
-      const reviewed = updated[0];
-      if (!reviewed) {
-        // Lost the race against another reviewer between SELECT and UPDATE.
-        throw new ConflictError("Este reporte ya fue revisado.", "REPORT_ALREADY_REVIEWED");
+      const target = cycles[0];
+      if (!target) {
+        throw new NotFoundError("No se encontró la semana destino.");
       }
 
-      if (decision === "APPROVED") {
-        await fulfilObligation(reviewed.cycle_id, reviewed.user_id, reviewed.id);
-      }
-      await notifyReview(reviewed.user_id, { reportId: reviewed.id, cycleId: reviewed.cycle_id, status: decision, note: reviewNote });
+      const ids = assertBulkIds(reportIds);
+      const skipped: BulkReassignSkipped[] = [];
+      let moved = 0;
 
-      return { id: reviewed.id, status: decision, userId: reviewed.user_id, cycleId: reviewed.cycle_id };
+      for (const reportId of ids) {
+        if (!UUID_RE.test(reportId)) {
+          skipped.push({ reportId, reason: "not_found", message: "No se encontró el reporte." });
+          continue;
+        }
+        try {
+          // PENDING-only (D52): an APPROVED report is already history — its
+          // obligation fulfilment points at it and CANNOT be rewritten. Only
+          // the same-cycle no-op is filtered out here so it classifies below.
+          const updated = await db.$queryRaw<Array<{ id: string }>>`
+            /* @pay:reassign */
+            UPDATE payment_reports SET cycle_id = ${target.id}::uuid
+            WHERE id = ${reportId}::uuid AND status = 'PENDING' AND cycle_id <> ${target.id}::uuid
+            RETURNING id
+          `;
+          if (updated.length > 0) {
+            moved += 1;
+            continue;
+          }
+
+          const states = await db.$queryRaw<Array<{ status: ReportStatus; cycleId: string }>>`
+            /* @pay:reassign-state */
+            SELECT status, cycle_id AS "cycleId" FROM payment_reports WHERE id = ${reportId}::uuid
+          `;
+          const state = states[0];
+          if (!state) {
+            skipped.push({ reportId, reason: "not_found", message: "No se encontró el reporte." });
+          } else if (state.cycleId === target.id) {
+            skipped.push({ reportId, reason: "already_in_target", message: "El reporte ya está en esa semana." });
+          } else {
+            skipped.push({ reportId, reason: "not_pending", message: "Solo se pueden reasignar reportes pendientes." });
+          }
+        } catch (error) {
+          // uq_report_user_cycle (D4): the person already has a live report
+          // in the target week; their two reports would collide.
+          if (isUniqueViolation(error)) {
+            skipped.push({ reportId, reason: "duplicate_in_target", message: "La persona ya tiene un reporte en esa semana." });
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      return { total: ids.length, moved, skipped, target: { id: target.id, periodKey: target.period_key } };
     },
 
     async listMyReports(actor, listOptions = {}) {

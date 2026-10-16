@@ -19,13 +19,30 @@ import { getSession } from "./auth/require";
 import { authorization } from "./authz";
 import { prisma } from "./db";
 import { AppError } from "./errors";
-import { createPaymentsService } from "./payments";
+import {
+  createPaymentsService,
+  type BulkReassignSkipped,
+  type BulkReviewSkipped,
+  type ReviewDecision,
+} from "./payments";
 import { settings } from "./settings";
 
 export interface PaymentActionResult {
   ok: boolean;
   message?: string;
   reportId?: string;
+}
+
+/** §8.5 bulk actions: counts plus the per-item skips the UI explains (D52). */
+export interface BulkPaymentActionResult {
+  ok: boolean;
+  message?: string;
+  /** Ready-to-render summary ("3 aprobados · 1 omitido"). */
+  summary?: string;
+  approved?: number;
+  rejected?: number;
+  moved?: number;
+  skipped?: Array<BulkReviewSkipped | BulkReassignSkipped>;
 }
 
 function toFailure(error: unknown): PaymentActionResult | null {
@@ -95,6 +112,92 @@ export async function reviewPaymentReportAction(input: {
 
     revalidatePath("/admin/revisiones");
     return { ok: true, reportId: reviewed.id };
+  } catch (error) {
+    const failure = toFailure(error);
+    if (failure) return failure;
+    throw error;
+  }
+}
+
+/** "2 aprobados · 1 omitido" — one line the page can show verbatim. */
+function countLabel(count: number, singular: string, plural: string): string | null {
+  if (count === 0) return null;
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+export async function bulkReviewPaymentsAction(input: {
+  reportIds: string[];
+  decision: ReviewDecision;
+  note?: string | null;
+}): Promise<BulkPaymentActionResult> {
+  const session = await getSession();
+  if (!session) return { ok: false, message: "Debes iniciar sesión para continuar." };
+
+  try {
+    const payments = createPaymentsService(prisma, settings, authorization);
+    const result = await payments.reviewMany(
+      { id: session.userId, role: session.role },
+      input.reportIds,
+      input.decision,
+      input.note ?? null,
+    );
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/pagos");
+    revalidatePath("/admin/revisiones");
+
+    const parts = [
+      countLabel(result.approved, "aprobado", "aprobados"),
+      countLabel(result.rejected, "rechazado", "rechazados"),
+      countLabel(result.skipped.length, "omitido", "omitidos"),
+    ].filter((part): part is string => part !== null);
+
+    return {
+      ok: true,
+      summary: parts.length > 0 ? parts.join(" · ") : "No había nada por hacer.",
+      approved: result.approved,
+      rejected: result.rejected,
+      skipped: result.skipped,
+    };
+  } catch (error) {
+    const failure = toFailure(error);
+    if (failure) return failure;
+    throw error;
+  }
+}
+
+export async function reassignPaymentsAction(input: {
+  reportIds: string[];
+  targetCycleId: string;
+}): Promise<BulkPaymentActionResult> {
+  const session = await getSession();
+  if (!session) return { ok: false, message: "Debes iniciar sesión para continuar." };
+
+  try {
+    const payments = createPaymentsService(prisma, settings, authorization);
+    const result = await payments.reassignReports(
+      { id: session.userId, role: session.role },
+      input.reportIds,
+      input.targetCycleId,
+    );
+
+    revalidatePath("/admin");
+    revalidatePath("/admin/pagos");
+    revalidatePath("/admin/revisiones");
+
+    const parts = [
+      result.moved > 0
+        ? `${result.moved} ${result.moved === 1 ? "reasignado" : "reasignados"} a ${result.target.periodKey}`
+        : null,
+      countLabel(result.skipped.length, "omitido", "omitidos"),
+    ].filter((part): part is string => part !== null);
+
+    return {
+      ok: true,
+      summary: parts.length > 0 ? parts.join(" · ") : "No había nada por hacer.",
+      moved: result.moved,
+      skipped: result.skipped,
+    };
   } catch (error) {
     const failure = toFailure(error);
     if (failure) return failure;

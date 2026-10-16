@@ -787,3 +787,29 @@ resuelve hacia lo más configurable (spec §18.7).
   amplia; el nivel del reporte es el actual (`u.depth`) y el árbol de
   filtrado es el histórico (`snapshot_path`) — dos preguntas distintas con la
   columna que corresponde a cada una.
+
+### D52 - Acciones en lote §8.5: aislamiento por ítem, tope de 500 y reasignación silenciosa
+- Contexto: aprobar/rechazar en lote y reasignar ciclo sobre cientos de
+  reportes exigen decidir qué pasa cuando UN ítem falla a mitad del lote, cómo
+  se acota el trabajo y qué efectos de auditoría se replican.
+- Decisión: `reviewMany` recorre los ids EN SECUENCIA y llama al MISMO
+  `reviewOne` que la revisión individual: mismos campos de auditoría
+  (`reviewed_by`/`reviewed_at`/`review_note`), misma sincronización de la
+  obligación y misma notificación por ítem. Un ítem ya revisado (conflicto) o
+  inexistente se OMITE con motivo y el lote continúa; un error de otro tipo
+  aborta el lote (no se disfraza). El rechazo exige UNA razón compartida que se
+  valida antes de tocar la base. Selección vacía o superior a 500 ids ⇒ 400 sin
+  SQL. La reasignación mueve SOLO reportes PENDING (D4: un aprobado ya está
+  atado a la obligación cumplida de su ciclo y no se reescribe; si la semana
+  quedó mal, el camino auditable es rechazar y volver a reportar), valida que la
+  semana destino exista y clasifica cada omisión: inexistente, no pendiente, ya
+  está en la semana o duplicado en destino (violación del índice único
+  parcial). No notifica: mover un reporte de semana no es una decisión sobre el
+  dinero; la notificación sigue ocurriendo al revisar. El id mal formado se
+  omite sin SQL, nunca llega a un cast `::uuid`.
+- Consecuencias: un lote de 200 aportes deja 200 filas de auditoría idénticas a
+  las de una revisión individual (nada "en bloque" invisible); el resultado
+  siempre explica qué se omitió y por qué; y la integridad
+  obligación↔reporte queda intacta porque solo se mueve lo que todavía no
+  decidió nada. La aprobación posterior en la semana destino cumple la
+  obligación de ESA semana por las reglas existentes, sin código nuevo.
