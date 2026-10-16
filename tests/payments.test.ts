@@ -409,10 +409,17 @@ describe("lists", () => {
   it("lists the pending review queue with the author and cycle, filtered by cycle when asked", async () => {
     const { db, service } = buildService();
 
-    const rows = await service.listReviewQueue({ cycleId: "cycle-1", limit: 10 });
+    const rows = await service.listReviewQueue(REVIEWER, { cycleId: "cycle-1", limit: 10 });
 
     expect(rows).toEqual([QUEUE_ROW]);
     expect(db.valuesOf("review-queue")).toEqual(["cycle-1", "cycle-1", 10]);
+  });
+
+  it("refuses a MEMBER before any statement runs (S4)", async () => {
+    const { db, service } = buildService();
+
+    await expect(service.listReviewQueue(ACTOR)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(db.callsFor("review-queue")).toHaveLength(0);
   });
 });
 

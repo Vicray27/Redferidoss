@@ -129,7 +129,8 @@ export interface PaymentsService {
   createReport(actor: PaymentsActor, input: CreateReportInput): Promise<CreatedReport>;
   reviewReport(actor: PaymentsActor, reportId: string, decision: ReviewDecision, note?: string | null): Promise<ReviewedReport>;
   listMyReports(actor: PaymentsActor, options?: { limit?: number }): Promise<MyReportRow[]>;
-  listReviewQueue(options?: { limit?: number; cycleId?: string }): Promise<ReviewQueueRow[]>;
+  /** Staff-only (root cause of S4): the queue exposes amounts and references. */
+  listReviewQueue(actor: PaymentsActor, options?: { limit?: number; cycleId?: string }): Promise<ReviewQueueRow[]>;
   /** §8.4/D39: the actor's direct invitees and their offering for a cycle. */
   downlineOfferings(actor: SessionActor, options: { cycleId: string; limit?: number }): Promise<DownlineOfferingRow[]>;
 }
@@ -427,7 +428,13 @@ export function createPaymentsService(
       `;
     },
 
-    async listReviewQueue(listOptions = {}) {
+    async listReviewQueue(actor, listOptions = {}) {
+      // The queue carries amounts and references: the guard lives HERE, not
+      // only in the page that calls it (S4 — a service that trusts its callers
+      // is one refactor away from a leak).
+      if (actor.role !== "ROOT" && actor.role !== "ADMIN") {
+        throw new ForbiddenError("Solo la administración puede revisar aportes.");
+      }
       const limit = clampLimit(listOptions.limit);
       return db.$queryRaw<ReviewQueueRow[]>`
         /* @pay:review-queue */

@@ -22,7 +22,10 @@ export default async function ReviewPage() {
   const session = await requireStaffSession("/admin/revisiones");
   const payments = createPaymentsService(prisma, settings, authorization);
 
-  const queue = await payments.listReviewQueue({ limit: 50 });
+  const queue = await payments.listReviewQueue(
+    { id: session.userId, role: session.role },
+    { limit: 50 },
+  );
 
   const rows: ReviewRow[] = queue.map((row) => ({
     id: row.id,
