@@ -3,8 +3,9 @@
 //
 // A session is a signed JWT in an httpOnly cookie. This module is imported by
 // `middleware.ts`, which runs on the Edge Runtime, so it deliberately depends on
-// NOTHING except `jose` and `zod`: no Prisma, no `pg`, no `next/*`. Every check
-// that needs a database happens in `lib/auth/require.ts`, on the server.
+// NOTHING except `jose`, `zod` and the pure settings validator in
+// `lib/security-settings.ts`: no Prisma, no `pg`, no `next/*`. Every check that
+// needs a database happens in `lib/auth/require.ts`, on the server.
 //
 // D16 records why this is a hand-rolled token and not Auth.js v5.
 //
@@ -28,13 +29,42 @@
 import { jwtVerify, SignJWT } from "jose";
 import { z } from "zod";
 
+import { resolvePositiveInteger, SETTING_SESSION_TTL_HOURS } from "../security-settings";
 import type { UserRole } from "../users";
 
 /** Cookie name. Prefixed by product so it cannot collide on a shared domain. */
 export const SESSION_COOKIE = "red_session";
 
-/** §9 session lifetime. Short enough that a stolen cookie has a bounded life. */
+/**
+ * §9 default session lifetime: 8 h. Kept as the fallback for a database whose
+ * `security.session_ttl_hours` row is missing (a freshly migrated environment
+ * before `pnpm seed:root`).
+ */
 export const SESSION_TTL_SECONDS = 60 * 60 * 8;
+
+/**
+ * §9 ceiling for `security.session_ttl_hours` (D17).
+ *
+ * The setting may LOWER the effective lifetime; values above this ceiling are
+ * CLAMPED here rather than rejected. Clamping is deliberate: the pre-F8
+ * catalog shipped 720 h (30 days) and that row still exists in any database
+ * that has not been re-set from /admin/settings, so rejecting would break
+ * every login for an operator mid-upgrade. The requirement is an upper bound,
+ * and `sessionTtlSecondsFromHours` enforces it on every issuance.
+ */
+export const SESSION_TTL_MAX_HOURS = 8;
+
+/**
+ * Pure conversion of the stored hours to seconds, with the D17 ceiling.
+ *
+ * A non-integer, zero or negative value is a misconfiguration and throws
+ * (`SecuritySettingInvalidError`), because silently defaulting is how a
+ * hardcoded business number sneaks back in — the exact §18.3 failure.
+ */
+export function sessionTtlSecondsFromHours(raw: unknown): number {
+  const hours = resolvePositiveInteger(SETTING_SESSION_TTL_HOURS, raw, { min: 1 });
+  return Math.min(hours, SESSION_TTL_MAX_HOURS) * 60 * 60;
+}
 
 const JWT_ISSUER = "red-referidos";
 const JWT_AUDIENCE = "red-referidos:web";

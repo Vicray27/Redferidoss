@@ -12,6 +12,7 @@ import { okResponse, parseQuery, requireApiSession, withApi } from "@/lib/api";
 import { authorization } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { createNetworkService } from "@/lib/network";
+import { settings } from "@/lib/settings";
 
 const querySchema = z.object({
   parentId: z.uuid("El identificador no es válido").optional(),
@@ -24,7 +25,7 @@ export async function GET(request: Request): Promise<Response> {
     const session = await requireApiSession();
     const query = parseQuery(request, querySchema);
 
-    const network = createNetworkService(prisma, authorization);
+    const network = createNetworkService(prisma, authorization, settings);
     const page = await network.listChildren(session, query);
 
     return okResponse(page);

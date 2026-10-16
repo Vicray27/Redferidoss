@@ -74,6 +74,25 @@ export function isPortalPath(url: string): boolean {
   return pathname === PORTAL_LANDING || pathname.startsWith(`${PORTAL_LANDING}/`);
 }
 
+/** True for `/login` and anything under it (the form's own subpaths). */
+export function isLoginPath(url: string): boolean {
+  const pathname = toPathname(url);
+  return pathname === LOGIN_PATH || pathname.startsWith(`${LOGIN_PATH}/`);
+}
+
+/**
+ * True for the paths whose ROUTING depends on the session.
+ *
+ * F8: the middleware now matches almost everything so the §13 security
+ * headers reach every response, and this predicate is what keeps the session
+ * work where it was before — JWT verification runs for /admin, /portal and
+ * /login only. `/api/*` (cron, health, fetch endpoints) pays no verification
+ * cost, preserving the property the old narrow matcher documented.
+ */
+export function needsSessionCheck(url: string): boolean {
+  return isAdminPath(url) || isPortalPath(url) || isLoginPath(url);
+}
+
 /**
  * Sanitise the `?next=` value coming back from a redirect.
  *
@@ -133,7 +152,7 @@ export function resolveRouteGuard(
 ): RouteDecision {
   const pathname = toPathname(url);
   const protectedArea = isAdminPath(pathname) || isPortalPath(pathname);
-  const isLogin = pathname === LOGIN_PATH || pathname.startsWith(`${LOGIN_PATH}/`);
+  const isLogin = isLoginPath(pathname);
 
   if (!subject) {
     if (protectedArea) {

@@ -13,6 +13,7 @@ import { okResponse, parseQuery, requireApiSession, withApi } from "@/lib/api";
 import { authorization } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { createNetworkService } from "@/lib/network";
+import { settings } from "@/lib/settings";
 
 const querySchema = z.object({
   q: z.string().trim().max(100).optional().default(""),
@@ -24,7 +25,7 @@ export async function GET(request: Request): Promise<Response> {
     const session = await requireApiSession();
     const { q, limit } = parseQuery(request, querySchema);
 
-    const network = createNetworkService(prisma, authorization);
+    const network = createNetworkService(prisma, authorization, settings);
     const results = await network.search(session, q, { limit });
 
     return okResponse({ query: q, results });

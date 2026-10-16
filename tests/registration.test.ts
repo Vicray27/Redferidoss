@@ -35,6 +35,7 @@ import {
   type RegistrationTx,
 } from "../lib/registration";
 import { UNIQUE_VALUE_MESSAGE } from "../lib/custom-fields";
+import { SETTING_PASSWORD_MIN_LENGTH } from "../lib/security-settings";
 import type { SettingsLike } from "../lib/authz";
 
 // ---------------------------------------------------------------------------
@@ -291,6 +292,8 @@ const BASE_SETTINGS: Record<string, unknown> = {
   [AUTO_APPROVE_SETTING]: true,
   [REQUIRE_EMAIL_VERIFICATION_SETTING]: false,
   [PENDING_AMOUNT_SETTING]: "10.00",
+  // F8: registerUser validates the password against the settings value.
+  [SETTING_PASSWORD_MIN_LENGTH]: 8,
 };
 
 function fakeSettings(entries: Record<string, unknown>): SettingsLike {
@@ -630,6 +633,25 @@ describe("registerUser — identity and status rules", () => {
     ).rejects.toBeInstanceOf(ValidationError);
 
     expect(hashCalls).toBe(0);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("enforces the password minimum read from settings, not a hardcoded number (§18.3)", async () => {
+    const fake = new RegistrationFake();
+    seedSponsor(fake);
+
+    // 11 characters, below the configured 12 — the message must name the
+    // CONFIGURED value, and nothing may reach hashing or the database.
+    await expect(
+      registerUser(
+        { ...INPUT, password: "oncecharsok" },
+        {},
+        makeDeps(fake, { [SETTING_PASSWORD_MIN_LENGTH]: 12 }),
+      ),
+    ).rejects.toMatchObject({
+      details: { password: ["La contraseña debe tener al menos 12 caracteres."] },
+    });
+
     expect(fake.calls).toHaveLength(0);
   });
 });

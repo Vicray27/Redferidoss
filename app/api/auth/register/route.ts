@@ -12,20 +12,24 @@
 // a second factor — a password they just chose — would add a step, not a
 // control. When `referral.require_email_verification` is on, the account comes
 // back PENDING and the portal shows the pending state instead of a session.
+//
+// F8 (§18.3): the hourly cap, the password minimum and the session lifetime
+// all come from settings, resolved through the pure readers in
+// lib/security-settings.ts. The route is the first consumer that must NOT fall
+// back to a hardcoded number, so a misconfigured row fails the request loudly
+// instead of silently weakening a control.
 // =============================================================================
 
 import { cookies } from "next/headers";
 
 import { assertSameOrigin, clientIp, okResponse, parseJsonBody, withApi } from "@/lib/api";
-import {
-  SESSION_COOKIE,
-  SESSION_COOKIE_OPTIONS,
-  SESSION_TTL_SECONDS,
-  signSessionToken,
-} from "@/lib/auth/session";
-import { registerCoreSchema } from "@/lib/register-schema";
+import { resolveSessionTtlSeconds } from "@/lib/auth/deps";
+import { SESSION_COOKIE, SESSION_COOKIE_OPTIONS, signSessionToken } from "@/lib/auth/session";
+import { createRegisterCoreSchema } from "@/lib/register-schema";
 import { registerUser } from "@/lib/registration";
 import { registerThrottle, registrationDeps } from "@/lib/registration-deps";
+import { readPasswordMinLength, readRegisterHourlyLimit } from "@/lib/security-settings";
+import { settings } from "@/lib/settings";
 import { RateLimitedError } from "@/lib/throttle";
 
 export async function POST(request: Request): Promise<Response> {
@@ -34,12 +38,18 @@ export async function POST(request: Request): Promise<Response> {
 
     // Throttle BEFORE touching argon2 or the database: rejecting a flood must
     // be cheap (§13.3). Counting every attempt, not just failures — there is no
-    // "failure" concept for this endpoint worth optimizing for.
+    // "failure" concept for this endpoint worth optimizing for. The cap is the
+    // `security.register_rate_limit_per_hour_per_ip` setting; the window and
+    // the counting stay in lib/throttle.ts.
     const ip = clientIp(request);
-    const rate = registerThrottle.attempt(ip ?? "unknown");
+    const maxPerHour = await readRegisterHourlyLimit(settings);
+    const rate = registerThrottle.attempt(ip ?? "unknown", maxPerHour);
     if (!rate.allowed) throw new RateLimitedError();
 
-    const input = await parseJsonBody(request, registerCoreSchema);
+    // The same settings-derived minimum `registerUser` re-checks server-side,
+    // so the client field error and the authority cannot disagree.
+    const minPasswordLength = await readPasswordMinLength(settings);
+    const input = await parseJsonBody(request, createRegisterCoreSchema(minPasswordLength));
 
     const result = await registerUser(
       input,
@@ -50,16 +60,22 @@ export async function POST(request: Request): Promise<Response> {
     // A PENDING account (email verification pending) may still log in to see
     // its state; the role gates what it can reach. Minting the cookie here is
     // what makes the "revisa tu correo" page reachable without a second login.
-    const token = await signSessionToken({
-      userId: result.userId,
-      role: "MEMBER",
-      publicCode: result.publicCode,
-      fullName: result.fullName,
-    });
+    // Token `exp` and cookie `maxAge` share the settings-derived lifetime, so
+    // one setting governs both ends of the session.
+    const ttlSeconds = await resolveSessionTtlSeconds();
+    const token = await signSessionToken(
+      {
+        userId: result.userId,
+        role: "MEMBER",
+        publicCode: result.publicCode,
+        fullName: result.fullName,
+      },
+      { ttlSeconds },
+    );
 
     (await cookies()).set(SESSION_COOKIE, token, {
       ...SESSION_COOKIE_OPTIONS,
-      maxAge: SESSION_TTL_SECONDS,
+      maxAge: ttlSeconds,
     });
 
     return okResponse(

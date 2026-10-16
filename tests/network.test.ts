@@ -88,12 +88,19 @@ function fakeSettings(entries: Record<string, unknown>): SettingsLike {
 const MEMBER = { userId: "member-1", role: "MEMBER" as const };
 const ROOT = { userId: "root-1", role: "ROOT" as const };
 
-function makeService(fake: NetFake, depthVisible = 3) {
+function makeService(fake: NetFake, depthVisible = 3, maskedSensitiveFields = true) {
   const authz = createAuthorization(
     fake,
     fakeSettings({ "visibility.downline_depth_visible": depthVisible }),
   );
-  return { authz, network: createNetworkService(fake, authz) };
+  return {
+    authz,
+    network: createNetworkService(
+      fake,
+      authz,
+      fakeSettings({ "visibility.mask_sensitive_fields": maskedSensitiveFields }),
+    ),
+  };
 }
 
 const CHILD_ROW = {
@@ -268,7 +275,7 @@ describe("node — detail with contact rules", () => {
   const DETAIL_ROW = { ...CHILD_ROW, email: "hijo@example.com", phone: "+595 981 000 000", sponsorId: "member-1" };
   const SPONSOR_REF = { id: "member-1", publicCode: "PARENT01", fullName: "Mamá", depth: 0 };
 
-  it("shows contact data to staff", async () => {
+  it("masks the phone for staff viewing somebody else while visibility.mask_sensitive_fields is on (§13.8)", async () => {
     const fake = new NetFake()
       .on("@net:node", () => [DETAIL_ROW])
       .on("@net:sponsor", () => [SPONSOR_REF]);
@@ -276,9 +283,22 @@ describe("node — detail with contact rules", () => {
 
     const detail = await network.node(ROOT, "child-1");
 
-    expect(detail.contact).toEqual({ email: "hijo@example.com", phone: "+595 981 000 000" });
+    // Email stays (it is the directory value); the phone is serialized masked
+    // by the SERVICE, so the raw number never leaves the server.
+    expect(detail.contact).toEqual({ email: "hijo@example.com", phone: "+595 9****" });
     expect(detail.sponsor).toEqual(SPONSOR_REF);
     expect(detail.childrenCount).toBe(2);
+  });
+
+  it("shows the unmasked phone to staff when the setting is off", async () => {
+    const fake = new NetFake()
+      .on("@net:node", () => [DETAIL_ROW])
+      .on("@net:sponsor", () => [SPONSOR_REF]);
+    const { network } = makeService(fake, 3, false);
+
+    const detail = await network.node(ROOT, "child-1");
+
+    expect(detail.contact).toEqual({ email: "hijo@example.com", phone: "+595 981 000 000" });
   });
 
   it("hides contact data and the downline count from a member browsing a downline node", async () => {
@@ -293,7 +313,7 @@ describe("node — detail with contact rules", () => {
     expect(detail.childrenCount).toBe(0);
   });
 
-  it("shows contact data to the member on their own row", async () => {
+  it("shows contact data to the member on their own row — masking never touches your own record", async () => {
     const selfRow = { ...DETAIL_ROW, id: "member-1", sponsorId: "root-1" };
     const fake = new NetFake()
       .on("@net:node", () => [selfRow])

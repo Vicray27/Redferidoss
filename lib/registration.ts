@@ -49,6 +49,7 @@ import {
   type RegistrationField,
 } from "./invitations";
 import type { SettingsLike } from "./authz";
+import { readPasswordMinLength } from "./security-settings";
 
 /** §6 keys this module reads. No defaults: a mis-seeded DB must fail loudly. */
 export const AUTO_APPROVE_SETTING = "referral.auto_approve_registration";
@@ -162,8 +163,6 @@ export function randomPublicCode(
   return code;
 }
 
-export const MIN_PASSWORD_LENGTH = 8;
-
 /** Trimmed string or null; "" and whitespace are stored as NULL, not as empty text. */
 export function emptyToNull(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
@@ -203,8 +202,14 @@ export async function registerUser(
   const fieldErrors: Record<string, string[]> = {};
   const email = input.email.trim().toLowerCase();
   if (!isValidEmail(email)) fieldErrors.email = ["Ingresa un correo válido."];
-  if (input.password.length < MIN_PASSWORD_LENGTH) {
-    fieldErrors.password = [`La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`];
+  // F8 (§18.3): the minimum comes from `security.password_min_length`, read
+  // here as the server-side authority; the route schema enforces the same
+  // value so the client error is per-field before this ever runs.
+  const minPasswordLength = await readPasswordMinLength(deps.settings);
+  if (input.password.length < minPasswordLength) {
+    fieldErrors.password = [
+      `La contraseña debe tener al menos ${minPasswordLength} caracteres.`,
+    ];
   }
   const fullName = input.fullName.trim();
   if (fullName === "") fieldErrors.fullName = ["Ingresa tu nombre completo."];

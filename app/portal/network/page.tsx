@@ -14,13 +14,14 @@ import { requireSession } from "@/lib/auth/require";
 import { authorization } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { createNetworkService } from "@/lib/network";
+import { settings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
 export default async function NetworkPage() {
   const session = await requireSession("/portal/network");
 
-  const network = createNetworkService(prisma, authorization);
+  const network = createNetworkService(prisma, authorization, settings);
   const [self, firstPage, size] = await Promise.all([
     network.node(session, session.userId),
     network.listChildren(session, {}),

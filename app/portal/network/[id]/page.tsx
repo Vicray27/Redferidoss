@@ -27,6 +27,7 @@ import { ForbiddenError, authorization, isStaffActor } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
 import { createNetworkService } from "@/lib/network";
+import { settings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export default async function NetworkNodePage({
 }) {
   const { id } = await params;
   const session = await requireSession(`/portal/network/${id}`);
-  const network = createNetworkService(prisma, authorization);
+  const network = createNetworkService(prisma, authorization, settings);
 
   let detail;
   try {

@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AuthSecretError,
   MIN_AUTH_SECRET_LENGTH,
-  readAuthSecret,
+  SESSION_TTL_MAX_HOURS,
   SESSION_TTL_SECONDS,
+  readAuthSecret,
+  sessionTtlSecondsFromHours,
   signSessionToken,
   verifySessionToken,
   type SessionPayload,
@@ -204,5 +206,30 @@ describe("verifySessionToken — payload shape is validated, not trusted", () =>
       .setExpirationTime("1h")
       .sign(key);
     await expect(verifySessionToken(forged)).resolves.toBeNull();
+  });
+});
+
+describe("sessionTtlSecondsFromHours — the settings value becomes a lifetime (F8/D17)", () => {
+  it("converts whole hours to seconds", () => {
+    expect(sessionTtlSecondsFromHours(1)).toBe(3600);
+    expect(sessionTtlSecondsFromHours(4)).toBe(4 * 3600);
+  });
+
+  it("clamps anything above the 8-hour ceiling instead of refusing it", () => {
+    // The pre-F8 catalog shipped 720 h and that row survives in databases that
+    // have not been re-set from /admin/settings (seed is ON CONFLICT DO
+    // NOTHING). Refusing would break every login mid-upgrade; clamping keeps
+    // the D17 invariant truthful.
+    expect(SESSION_TTL_MAX_HOURS).toBe(8);
+    expect(sessionTtlSecondsFromHours(9)).toBe(8 * 3600);
+    expect(sessionTtlSecondsFromHours(720)).toBe(8 * 3600);
+  });
+
+  it("fails loudly when the value cannot be a lifetime, naming the key", () => {
+    for (const bad of [0, -2, 1.5, "abc", null, undefined, Number.NaN]) {
+      expect(() => sessionTtlSecondsFromHours(bad), String(bad)).toThrow(
+        /security\.session_ttl_hours/,
+      );
+    }
   });
 });

@@ -12,6 +12,7 @@
 
 import { prisma } from "@/lib/db";
 import { InviteInvalidError, createInvitationsService } from "@/lib/invitations";
+import { readPasswordMinLength } from "@/lib/security-settings";
 import { settings } from "@/lib/settings";
 
 import { RegisterForm } from "./register-form";
@@ -41,6 +42,10 @@ export async function InvitePage({ slug }: { slug: string }) {
     );
   }
 
+  // F8: the form's client-side minimum mirrors the settings value; the route
+  // handler re-reads the same row and remains the authority.
+  const minPasswordLength = await readPasswordMinLength(settings);
+
   return (
     <main className="flex min-h-screen items-start justify-center bg-muted/40 p-6">
       <div className="w-full max-w-2xl space-y-6">
@@ -57,6 +62,7 @@ export async function InvitePage({ slug }: { slug: string }) {
           fields={resolution.fields}
           sponsorName={resolution.sponsor.fullName}
           slotsLeft={resolution.slots.left}
+          minPasswordLength={minPasswordLength}
         />
       </div>
     </main>

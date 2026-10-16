@@ -20,9 +20,14 @@
 import { cookies } from "next/headers";
 
 import { landingPathForRole, safeNextPath } from "./guards";
-import { loginDeps, loginRateLimiter } from "./deps";
+import {
+  loginDeps,
+  loginRateLimiter,
+  resolveLoginMaxFailures,
+  resolveSessionTtlSeconds,
+} from "./deps";
 import { authenticate, AUTH_UNAVAILABLE_MESSAGE } from "./login";
-import { LOGIN_MAX_FAILURES, RATE_LIMITED_MESSAGE } from "./rate-limit";
+import { RATE_LIMITED_MESSAGE } from "./rate-limit";
 import { firstIssuesByField, loginSchema } from "./schema";
 import { AuthSecretError, SESSION_COOKIE, SESSION_COOKIE_OPTIONS } from "./session";
 
@@ -49,8 +54,11 @@ export async function loginAction(
 
   try {
     // Throttle BEFORE spending argon2 time, so a brute-force run is cheap to
-    // reject rather than expensive to serve.
-    if (await loginRateLimiter.current(email) >= LOGIN_MAX_FAILURES) {
+    // reject rather than expensive to serve. The threshold is read from
+    // settings (§18.3); a missing or unusable row throws and surfaces as a 500
+    // rather than silently using a stale hardcoded number.
+    const maxFailures = await resolveLoginMaxFailures();
+    if (await loginRateLimiter.current(email) >= maxFailures) {
       return { ok: false, message: RATE_LIMITED_MESSAGE };
     }
 
@@ -78,7 +86,9 @@ export async function loginAction(
 
     (await cookies()).set(SESSION_COOKIE, outcome.token, {
       ...SESSION_COOKIE_OPTIONS,
-      maxAge: SESSION_COOKIE_MAX_AGE_SECONDS,
+      // Same settings-derived value the token's `exp` was minted with, so the
+      // cookie and the claims expire together.
+      maxAge: await resolveSessionTtlSeconds(),
     });
 
     return { ok: true, redirectTo };
@@ -93,9 +103,6 @@ export async function loginAction(
     throw error;
   }
 }
-
-/** Keeps the cookie lifetime and the token lifetime in step. */
-const SESSION_COOKIE_MAX_AGE_SECONDS = 8 * 60 * 60;
 
 /**
  * A staff-only path is not a valid destination for a MEMBER, even when the

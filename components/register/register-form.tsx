@@ -37,13 +37,23 @@ import {
   Label,
 } from "@/components/ui/form";
 import type { RegistrationField } from "@/lib/invitations";
-import { registerCoreSchema } from "@/lib/register-schema";
+import {
+  createRegisterCoreSchema,
+  REGISTER_MIN_PASSWORD_LENGTH,
+} from "@/lib/register-schema";
 
 import type { z } from "zod";
 
 // The form renders neither `invite` (it arrives in the URL) nor `custom`
 // (it is the value map below) — so its schema is the core schema minus both.
-const formSchema = registerCoreSchema.omit({ invite: true, custom: true });
+// F8: the password minimum is a prop (`security.password_min_length`, read by
+// the server page that renders this form); the schema is rebuilt only when a
+// caller genuinely passes a different value.
+function buildFormSchema(minPasswordLength: number) {
+  return createRegisterCoreSchema(minPasswordLength).omit({ invite: true, custom: true });
+}
+
+const formSchema = buildFormSchema(REGISTER_MIN_PASSWORD_LENGTH);
 type FormValues = z.infer<typeof formSchema>;
 
 export function RegisterForm({
@@ -51,13 +61,24 @@ export function RegisterForm({
   fields,
   sponsorName,
   slotsLeft,
+  minPasswordLength = REGISTER_MIN_PASSWORD_LENGTH,
 }: {
   invite: string;
   fields: RegistrationField[];
   sponsorName: string;
   slotsLeft: number;
+  /** `security.password_min_length` as resolved server-side. */
+  minPasswordLength?: number;
 }) {
   const router = useRouter();
+
+  // The resolver is created once per mounted form; the value cannot change
+  // while the page is open (it is a server prop), so a ref-free memo here
+  // does not need to fight react-hook-form's cached options.
+  const schema =
+    minPasswordLength === REGISTER_MIN_PASSWORD_LENGTH
+      ? formSchema
+      : buildFormSchema(minPasswordLength);
 
   const [formError, setFormError] = useState<string | null>(null);
   // The admin-defined defaults PREFILL the form (D56); the server still
@@ -80,7 +101,7 @@ export function RegisterForm({
     setError,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(schema),
     mode: "onSubmit",
     defaultValues: {
       email: "",
@@ -205,7 +226,7 @@ export function RegisterForm({
             disabled={isSubmitting}
             registration={register("password")}
             autoComplete="new-password"
-            hint="Mínimo 8 caracteres."
+            hint={`Mínimo ${minPasswordLength} caracteres.`}
           />
 
           {fields.map((field) => (

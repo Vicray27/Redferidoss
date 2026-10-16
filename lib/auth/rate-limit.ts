@@ -24,6 +24,12 @@
 //   determined attacker gets two bursts across a boundary, which is acceptable
 //   at this limit.
 //
+// * THE LIMIT IS NOT HERE. F8 removed the retired `LOGIN_MAX_FAILURES`
+//   constant: the allowed number of failures lives in the
+//   `security.login_rate_limit_per_15m` setting (§18.3) and is resolved by
+//   `resolveLoginMaxFailures()` in lib/auth/deps.ts. This module owns the
+//   WINDOW, the key and the counting; the threshold is policy.
+//
 // Dependencies are injected so tests can count rows, the clock and the hash
 // without a database, exactly like lib/settings.ts and lib/auth/login.ts.
 // =============================================================================
@@ -32,9 +38,6 @@ import { createHash } from "node:crypto";
 
 /** Window length. Long enough not to punish typos, short to limit guessing. */
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-
-/** Failed attempts allowed per window before the login is refused. */
-export const LOGIN_MAX_FAILURES = 8;
 
 /** Minimal raw-query client, same structural type as lib/users.ts. */
 export type RawQueryDb = {

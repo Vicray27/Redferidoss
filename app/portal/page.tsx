@@ -27,7 +27,7 @@ export const dynamic = "force-dynamic";
 export default async function PortalPage() {
   const session = await requireSession("/portal");
 
-  const network = createNetworkService(prisma, authorization);
+  const network = createNetworkService(prisma, authorization, settings);
   const invitations = createInvitationsService(prisma, settings);
 
   const [self, size, quota] = await Promise.all([

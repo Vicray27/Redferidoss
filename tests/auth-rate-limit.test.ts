@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   createLoginRateLimiter,
   loginRateLimitKey,
-  LOGIN_MAX_FAILURES,
   LOGIN_WINDOW_MS,
   RATE_LIMITED_MESSAGE,
   windowStart,
   type RawQueryDb,
 } from "../lib/auth/rate-limit";
+
+const FAILURE_LIMIT_EXAMPLE = 10;
 
 /**
  * No database: the limiter takes the raw-query client, the clock and the window
@@ -129,17 +130,20 @@ describe("reset", () => {
 });
 
 describe("the limit itself", () => {
-  it("is 8 failures per 15 minutes, and the message reveals nothing about accounts", async () => {
-    expect(LOGIN_MAX_FAILURES).toBe(8);
+  it("keeps the window and a message that reveals nothing about accounts", async () => {
+    // F8: the failure THRESHOLD is no longer a constant here — it is the
+    // `security.login_rate_limit_per_15m` setting, resolved in
+    // lib/auth/deps.ts (tested in tests/security-settings.test.ts). This suite
+    // owns the window and the counting.
     expect(LOGIN_WINDOW_MS).toBe(15 * 60 * 1000);
     // The throttle must not become the enumeration oracle that
     // INVALID_CREDENTIALS_MESSAGE refuses to be.
     expect(RATE_LIMITED_MESSAGE).not.toMatch(/contraseña incorrecta|correo|contraseña/i);
   });
 
-  it("is reached at exactly the configured number of failures", async () => {
-    const { db } = fakeDb([{ count: LOGIN_MAX_FAILURES }]);
+  it("reports the stored count so the caller can compare it against the setting", async () => {
+    const { db } = fakeDb([{ count: FAILURE_LIMIT_EXAMPLE }]);
     const limiter = createLoginRateLimiter(db);
-    expect(await limiter.current("a@example.com")).toBeGreaterThanOrEqual(LOGIN_MAX_FAILURES);
+    expect(await limiter.current("a@example.com")).toBeGreaterThanOrEqual(FAILURE_LIMIT_EXAMPLE);
   });
 });

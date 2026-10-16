@@ -49,8 +49,15 @@ export interface ThrottleVerdict {
 }
 
 export interface Throttle {
-  /** Count one attempt for `key` and say whether it may proceed. */
-  attempt(key: string): ThrottleVerdict;
+  /**
+   * Count one attempt for `key` and say whether it may proceed.
+   *
+   * `maxOverride` lets a caller supply a settings-derived limit per attempt
+   * (F8: `security.register_rate_limit_per_hour_per_ip`), so the threshold is
+   * policy read at request time instead of a constructor constant this module
+   * would have to import from a data layer.
+   */
+  attempt(key: string, maxOverride?: number): ThrottleVerdict;
   /** Live key count; diagnostics and tests. */
   size(): number;
   reset(): void;
@@ -78,7 +85,12 @@ export function createThrottle(options: ThrottleOptions): Throttle {
   };
 
   return {
-    attempt(key: string): ThrottleVerdict {
+    attempt(key: string, maxOverride?: number): ThrottleVerdict {
+      const max = maxOverride ?? options.max;
+      if (!Number.isInteger(max) || max < 1) {
+        throw new RangeError("throttle max must be a positive integer");
+      }
+
       const nowMs = now();
       const windowStart = Math.floor(nowMs / options.windowMs) * options.windowMs;
       const retryAfterMs = windowStart + options.windowMs - nowMs;
@@ -87,13 +99,13 @@ export function createThrottle(options: ThrottleOptions): Throttle {
       if (!bucket || bucket.windowStart !== windowStart) {
         prune(windowStart);
         buckets.set(key, { windowStart, count: 1 });
-        return { allowed: options.max >= 1, remaining: Math.max(0, options.max - 1), retryAfterMs };
+        return { allowed: max >= 1, remaining: Math.max(0, max - 1), retryAfterMs };
       }
 
       bucket.count += 1;
       return {
-        allowed: bucket.count <= options.max,
-        remaining: Math.max(0, options.max - bucket.count),
+        allowed: bucket.count <= max,
+        remaining: Math.max(0, max - bucket.count),
         retryAfterMs,
       };
     },

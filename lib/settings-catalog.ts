@@ -468,11 +468,14 @@ export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
   {
     key: "security.session_ttl_hours",
     type: "INT",
-    value: 720,
+    value: 8,
     groupName: "security",
     label: "Duracion de la sesion (horas)",
-    description: "Validez de la sesion antes de exigir reautenticacion.",
+    // D17: the code clamps the effective lifetime at 8 h (SESSION_TTL_MAX_HOURS),
+    // so the catalog offers exactly the range that can take effect.
+    description: "Validez de la sesion antes de exigir reautenticacion. Tope de seguridad: 8 horas.",
     minValue: 1,
+    maxValue: 8,
     isPublic: false,
     editableBy: "ADMIN",
   },
@@ -482,7 +485,8 @@ export const SETTINGS_CATALOG: readonly CatalogEntry[] = [
     value: 10,
     groupName: "security",
     label: "Intentos de login por 15 minutos",
-    description: "Intentos de inicio de sesion permitidos por IP cada 15 minutos.",
+    // D18 counts FAILURES per account (a hash of the email), not per IP.
+    description: "Intentos fallidos de inicio de sesion permitidos por cuenta cada 15 minutos.",
     minValue: 1,
     isPublic: false,
     editableBy: "ADMIN",

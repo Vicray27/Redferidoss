@@ -16,6 +16,7 @@ import { authorization } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { ValidationError, fieldErrorsFrom } from "@/lib/errors";
 import { createNetworkService } from "@/lib/network";
+import { settings } from "@/lib/settings";
 
 const paramsSchema = z.object({
   id: z.uuid("El identificador no es válido"),
@@ -33,7 +34,7 @@ export async function GET(
       throw new ValidationError("Parámetros inválidos.", fieldErrorsFrom(parsed.error.issues));
     }
 
-    const network = createNetworkService(prisma, authorization);
+    const network = createNetworkService(prisma, authorization, settings);
     const [node, breadcrumb] = await Promise.all([
       network.node(session, parsed.data.id),
       network.breadcrumb(session, parsed.data.id),

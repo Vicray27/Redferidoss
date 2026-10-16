@@ -47,8 +47,11 @@ import {
   type Authorization,
   type RawQueryDb,
   type SessionActor,
+  type SettingsLike,
 } from "./authz";
 import { NotFoundError } from "./errors";
+import { maskSensitive } from "./mask";
+import { readMaskSensitiveFields } from "./security-settings";
 
 export const DEFAULT_PAGE_SIZE = 25;
 export const MAX_PAGE_SIZE = 50;
@@ -83,7 +86,10 @@ export interface NetworkNodeDetail extends NetworkNode {
   sponsor: NetworkNodeRef | null;
   /**
    * Email/phone, only for staff or the user themself. A MEMBER browsing their
-   * downline sees identity and tree position, not contact data.
+   * downline sees identity and tree position, not contact data. §13.8: when
+   * `visibility.mask_sensitive_fields` is on, the phone is masked for every
+   * viewer who is NOT its owner — staff included — at serialization time, so
+   * the raw value never leaves the server.
    */
   contact: { email: string | null; phone: string | null } | null;
 }
@@ -174,6 +180,7 @@ function scopeCondition(scope: { fragment: Prisma.Sql; unrestricted: boolean }):
 export function createNetworkService(
   db: RawQueryDb,
   authz: Authorization = defaultAuthorization,
+  settings: SettingsLike,
 ): NetworkService {
   const listChildren: NetworkService["listChildren"] = async (actor, params = {}) => {
     // Default to the actor's own node: the portal tree starts at "me".
@@ -298,10 +305,22 @@ export function createNetworkService(
 
     const canSeeContact = isStaffActor(actor) || actor.userId === row.id;
 
+    let contact: NetworkNodeDetail["contact"] = null;
+    if (canSeeContact) {
+      // §13.8: masking protects what OTHERS see — the owner always reads their
+      // own record unmasked, and a missing key throws rather than defaulting.
+      const isSelf = actor.userId === row.id;
+      const mask = !isSelf && (await readMaskSensitiveFields(settings));
+      contact = {
+        email: row.email,
+        phone: mask ? maskSensitive(row.phone) : row.phone,
+      };
+    }
+
     return {
       ...toNode(row, { childrenCountHidden: !countsVisibleFor(actor, row.id) }),
       sponsor,
-      contact: canSeeContact ? { email: row.email, phone: row.phone } : null,
+      contact,
     };
   };
 

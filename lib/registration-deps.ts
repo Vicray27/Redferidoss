@@ -26,9 +26,11 @@ export const registrationDeps: RegistrationDeps = {
 };
 
 /**
- * 20 registrations per IP per hour. Generous for a household or a shared
- * connection registering a whole referral line; far below what scripted abuse
- * needs to be worthwhile.
+ * The per-IP registration throttle. The WINDOW lives here; the effective CAP
+ * comes from `security.register_rate_limit_per_hour_per_ip`, read per request
+ * by the route and passed to `attempt()` (§18.3, F8). The constructor `max`
+ * below only satisfies the API for hypothetical callers that do not pass an
+ * override — no production caller relies on it.
  */
 export const registerThrottle = createThrottle({ windowMs: 60 * 60 * 1000, max: 20 });
 

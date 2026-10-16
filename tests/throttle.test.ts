@@ -99,6 +99,26 @@ describe("createThrottle — window arithmetic", () => {
   });
 });
 
+describe("createThrottle — per-call max override (F8)", () => {
+  it("uses the override as the threshold for that key, leaving the constructor max alone", () => {
+    const { throttle } = ticket(); // constructor max: 2
+
+    expect(throttle.attempt("ip-override", 1).allowed).toBe(true);
+    expect(throttle.attempt("ip-override", 1).allowed).toBe(false);
+    // Another key still runs on the constructor value.
+    expect(throttle.attempt("ip-default").allowed).toBe(true);
+    expect(throttle.attempt("ip-default").allowed).toBe(true);
+    expect(throttle.attempt("ip-default").allowed).toBe(false);
+  });
+
+  it("rejects a nonsense override loudly, like the constructor value", () => {
+    const { throttle } = ticket();
+    expect(() => throttle.attempt("ip-1", 0)).toThrow(RangeError);
+    expect(() => throttle.attempt("ip-1", 2.5)).toThrow(RangeError);
+    expect(() => throttle.attempt("ip-1", Number.NaN)).toThrow(RangeError);
+  });
+});
+
 describe("RateLimitedError", () => {
   it("maps to the 429 envelope with the §10 shape", async () => {
     const response = toErrorResponse(new RateLimitedError());

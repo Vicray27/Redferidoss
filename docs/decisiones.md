@@ -1167,3 +1167,102 @@ resuelve hacia lo más configurable (spec §18.7).
 - Consecuencias: la cadencia se reconfigura en el registry (`timing`); los
   tests del scheduler son herméticos (reloj y timers inyectados); y la ruta
   cron sigue siendo la superficie autenticada para disparos manuales.
+
+### D63 - Headers de seguridad y CSP con nonce en TODAS las respuestas (F8)
+- Contexto: §13 pide headers de seguridad; con matcher estrecho (sólo
+  `/admin`, `/portal`, `/login`) las respuestas de `/api/*` y las páginas
+  públicas quedaban sin política, y una política que no cubre todo no es una
+  política. El costo a evitar era que cada llamada de cron pagara verificación
+  de JWT (propiedad que el matcher anterior documentaba).
+- Decisión: (1) `lib/security-headers.ts` construye los headers en un solo
+  lugar; `middleware.ts` los adjunta a toda respuesta que procesa (allow,
+  redirect y short-circuit), y el matcher pasa a
+  `"/((?!_next/static|_next/image|favicon.ico).*)"`. (2) La verificación de
+  sesión queda gateada por `needsSessionCheck()` (nuevo en lib/auth/guards.ts):
+  sólo `/admin`, `/portal` y `/login` hacen trabajo de token; `/api/*` y las
+  públicas no pagan criptografía — la propiedad del matcher viejo se preserva
+  con un contrato distinto y testeado (tests/auth-middleware.test.ts). (3) CSP
+  con nonce por receta de Next: el middleware pone `x-nonce` + la política en
+  los headers de REQUEST (Next estampa el nonce en sus scripts/styles durante
+  el render) y la misma política va en la respuesta. Producción:
+  `script-src 'self' 'nonce-…' 'strict-dynamic'`, sin `unsafe-inline`/`eval`.
+  Desarrollo: relaxaciones (`unsafe-inline`/`unsafe-eval`) gateadas por
+  NODE_ENV y SIN nonce en la directiva (un nonce haría que el navegador ignore
+  `unsafe-inline` y rompería el HMR). (4) `style-src 'self' 'unsafe-inline'`
+  a propósito y sin nonce: los charts y el árbol usan atributos `style={{…}}`
+  y por CSP3 una fuente nonce/hash desactiva `unsafe-inline`; el trade es
+  scripts estrictos, estilos pragmáticos. (5) Se suman HSTS
+  (`max-age=31536000; includeSubDomains`), `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY` (redundante con `frame-ancestors 'none'`, para
+  agentes viejos) y `Referrer-Policy: strict-origin-when-cross-origin`.
+  (6) `upgrade-insecure-requests` sólo en producción.
+- Consecuencias: todas las páginas de la app son dinámicas (verificado:
+  `prerender-manifest` sólo lista `/_not-found`), así que el nonce aplica en
+  todo render real; `/_not-found` es la única ruta prerenderizada y en
+  producción sus scripts quedan sin nonce y no hidratan (el HTML y el CSS se
+  sirven igual; sus enlaces funcionan) — trade aceptado y documentado aquí.
+  Un test unitario pinnea cada directiva (tests/security-headers.test.ts).
+
+### D64 - Umbrales de login, registro y contraseña mínima leídos de settings (F8)
+- Contexto: §18.3 prohíbe números de negocio hardcodeados. Convivían
+  `LOGIN_MAX_FAILURES = 8`, `createThrottle({ max: 20 })` y
+  `REGISTER_MIN_PASSWORD_LENGTH = 8` con las claves `security.*` del catálogo.
+- Decisión: (1) Login: el límite sale de `security.login_rate_limit_per_15m`
+  (valor sembrado 10) vía `resolveLoginMaxFailures()`; el módulo de rate-limit
+  conserva la ventana, la clave (hash del email) y el conteo — el umbral es
+  política, no mecanismo. Efecto: el límite efectivo pasa de 8 a 10, el valor
+  que el catálogo sembró desde §6. (2) Registro: `security.register_rate_limit_per_hour_per_ip`
+  (valor 5) se lee por request en la ruta y se pasa a `throttle.attempt(key,
+  maxOverride)`; la ventana de 1 h sigue en `lib/registration-deps.ts`.
+  Efecto: el tope efectivo pasa de 20 a 5 por hora e IP. (3) Contraseña:
+  `security.password_min_length` se lee en la ruta (schema de Zod construido
+  por `createRegisterCoreSchema(min)`), en `registerUser` (autoridad
+  server-side) y en la página de invitación (prop del form para el hint y el
+  schema del cliente). El piso de 8 se aplica en la LECTURA
+  (`readPasswordMinLength`): la clave puede subir el mínimo, nunca bajarlo.
+  (4) Clave ausente o valor no-entero/≤0 => `SecuritySettingInvalidError` con
+  la clave en el mensaje (fallar explícito, §18.3); `registerUser` y la ruta
+  no tienen fallback silencioso. Excepción razonada: el TTL de sesión (D65).
+- Consecuencias: cambiar un umbral es un UPDATE en `/admin/settings` (caché de
+  60 s de D9); los tests cubren los tres consumidores y el modo de fallo
+  (tests/security-settings.test.ts, registration, throttle).
+
+### D65 - TTL de sesión desde settings, con tope de 8 h y catálogo alineado (F8)
+- Contexto: la sesión duraba 8 h hardcodeadas (`SESSION_TTL_SECONDS`) mientras
+  el catálogo ofrecía `security.session_ttl_hours = 720` (30 días). La fila
+  720 ya vive en bases existentes y `seed:root` no actualiza filas
+  (`ON CONFLICT DO NOTHING`), así que rechazar valores altos habría roto el
+  login de un entorno sin re-sembrar, en medio de un upgrade.
+- Decisión: (1) El catálogo pasa a `value: 8` + `maxValue: 8` (el admin no
+  puede ofrecer más de lo que el código aplica). (2) El código CLAMPEA en
+  `SESSION_TTL_MAX_HOURS = 8` (`sessionTtlSecondsFromHours`), en vez de
+  rechazar: la invariante D17 es un tope, no una forma. La clave puede BAJAR
+  la duración; subirla por encima de 8 h no tiene efecto hasta que exista un
+  D-decision que mueva el tope. (3) Clave ausente => 8 h con `console.warn`
+  (un entorno recién migrado antes de `pnpm seed:root` debe poder loguearse);
+  valor presente pero no-entero o ≤0 => throw explícito. (4) `exp` del token y
+  `maxAge` de la cookie salen del MISMO valor resuelto (login y registro).
+- Consecuencias: cambiar la duración es un setting; la fila 720 se lee, se
+  clampa y queda corregida en cuanto un admin guarde el formulario (la
+  validación de `maxValue` lo obliga); tests en auth-session.
+
+### D66 - Enmascarado de datos sensibles en la serialización (F8)
+- Contexto: §13.8 pide enmascarar campos sensibles según
+  `visibility.mask_sensitive_fields`. Ocultarlo en la UI no alcanza: el API es
+  el borde que filtra o no filtra.
+- Decisión: (1) `lib/mask.ts` `maskSensitive` conserva los primeros 6
+  caracteres y enmascara el resto (`V-1234****`), enmascarando MÁS cuanto más
+  corto el valor. (2) El consumo está en `createNetworkService` (node detalle):
+  el teléfono se enmascara cuando el setting está on Y el espectador no es el
+  dueño de la fila; el dueño ve su propio registro sin máscara y el email NO se
+  enmascara (es el dato de contacto del directorio). (3) La lectura del
+  setting es perezosa: sólo si hay `contact` visible y el espectador no es el
+  dueño — nunca paga una lectura quien no recibe el dato. (4) `nationalId` hoy
+  no aparece en ningún read path; el helper y sus tests existen para el futuro.
+  (5) `createNetworkService` recibe el settings reader como tercer parámetro
+  obligatorio: sin él no hay servicio, así el enmascarado no puede quedar
+  "accidentalmente apagado" por un call site que se olvide de pasarlo.
+- Consecuencias: el valor crudo no sale del servidor cuando corresponde; los
+  6 call sites (3 rutas de `/api/network` + 3 páginas del portal) pasan
+  `settings`; tests del helper y del servicio cubren dueño, staff, setting
+  on/off.
