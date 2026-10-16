@@ -15,12 +15,14 @@ import { NotFoundError } from "../lib/errors";
 import {
   createReportsService,
   dateLabel,
+  sharedCurrencyLabel,
   sheetCsv,
   sheetFileName,
   sheetMatrix,
   SHEET_COLUMN_WIDTHS,
   SHEET_HEADERS,
   summarizeSheet,
+  type ConsolidatedSheet,
   type ConsolidatedSheetRow,
   type ReportsAuthz,
   type ReportsDb,
@@ -478,6 +480,33 @@ describe("sheetCsv", () => {
     expect(lines[0]).toBe(SHEET_HEADERS.join(","));
     // The comma-and-quote name is quoted, its quotes doubled (RFC 4180).
     expect(csv).toContain('"Pérez, ""Dora"""');
+  });
+});
+
+describe("sharedCurrencyLabel", () => {
+  async function sheetOf(rows: unknown[]): Promise<ConsolidatedSheet> {
+    const { service } = build(rows);
+    return service.getConsolidatedSheet(STAFF);
+  }
+
+  it("names the currency when every live amount shares one", async () => {
+    const sheet = await sheetOf(ALL_ROWS);
+    // REPORTER (APPROVED, USD) + ZERO_ROW (PENDING, USD); REJECTED's USD does not count.
+    expect(sharedCurrencyLabel(sheet)).toBe("USD");
+  });
+
+  it("says «varias monedas» when a mid-week change mixed them", async () => {
+    const sheet = await sheetOf([
+      REPORTER,
+      { ...ZERO_ROW, currency: "VES" },
+      SILENT,
+    ]);
+    expect(sharedCurrencyLabel(sheet)).toBe("varias monedas");
+  });
+
+  it("returns null when no live amount exists", async () => {
+    const sheet = await sheetOf([SILENT, REJECTED]);
+    expect(sharedCurrencyLabel(sheet)).toBeNull();
   });
 });
 

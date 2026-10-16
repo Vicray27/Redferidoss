@@ -25,11 +25,16 @@ export default async function AdminPage() {
       title="Administración"
       description="Zona reservada a ROOT y ADMIN. El panel completo llega en F5."
     >
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
         <NavCard
           href="/admin/revisiones"
           title="Revisión de aportes"
           description="Aprueba o rechaza los aportes reportados de la semana."
+        />
+        <NavCard
+          href="/admin/reportes"
+          title="Reportes"
+          description="Planilla consolidada de la semana, con impresión y exportación a Excel o CSV."
         />
         <NavCard
           href="/admin/configuracion"
@@ -39,7 +44,7 @@ export default async function AdminPage() {
       </div>
 
       <section className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
-        El panel completo (referidos, métricas, exportes) llega en F5.
+        El panel completo (referidos, métricas) llega en F5.
       </section>
     </SessionShell>
   );

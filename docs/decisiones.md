@@ -674,7 +674,11 @@ resuelve hacia lo más configurable (spec §18.7).
   una columna es una sola edición y las cuatro caras no pueden divergir. La
   ruta de exportación y la página comparten el servicio `createReportsService`
   (guard staff ANTES de cualquier lectura, D39) y el mismo nombre de archivo
-  (`planilla-<period_key>.xlsx|csv`).
+  (`planilla-<period_key>.xlsx|csv`). La moneda de la tira de totales:
+  `payments.currency` es un ajuste global (§6), así que un ciclo comparte moneda
+  salvo que el admin la cambie a mitad de semana; la UI muestra la moneda
+  cuando es única, «varias monedas» cuando no, y la columna Moneda por fila
+  queda como detalle (`sharedCurrencyLabel`).
 
 ### D47 - El XLSX se genera con write-excel-file dentro del route handler
 - Contexto: §8.4 pide exportar la planilla. Las opciones eran `exceljs`
@@ -694,3 +698,19 @@ resuelve hacia lo más configurable (spec §18.7).
   pasa por `SHEET_HEADERS` + `sheetMatrix` + `SHEET_COLUMN_WIDTHS` y aparece en
   pantalla, CSV, XLSX e impresión a la vez. `format` por defecto es `xlsx`; un
   `format` desconocido responde 400 `VALIDATION_FAILED` antes de tocar la base.
+
+### D48 - "Exportar a PDF" es la vista de impresión del navegador
+- Contexto: §8.4 pide la planilla "exportable"; Excel sale por D47, y para PDF
+  las opciones eran una librería (pdfkit/puppeteer: peso, fuentes y un segundo
+  layout que mantener en sincronía) o la impresión del navegador.
+- Decisión: la exportación a PDF es `GET /admin/reportes/imprimir?cycle=…` más
+  `window.print()`: una página SIN `SessionShell` (el chrome de navegación no
+  debe imprimirse), `@page { size: A4 landscape; margin: 10mm }`, encabezado
+  con la semana, el rango de fechas y el sello "Generada el DD/MM/YYYY HH:MM", y
+  la MISMA matriz que la pantalla y el XLSX; el único control interactivo es un
+  botón cliente (`print-button.tsx`) que se oculta con `print:hidden`.
+- Consecuencias: cero dependencias nuevas y una sola definición del documento,
+  así que el PDF archivado es exactamente lo que se vio en pantalla; el sello de
+  generación es lo que hace comparables dos impresiones de la misma semana. Un
+  reporte semanal del portal (`app/portal/semana`) puede reutilizar esta vista
+  más adelante sin agregar librería alguna.

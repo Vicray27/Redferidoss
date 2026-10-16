@@ -403,6 +403,23 @@ export function sheetFileName(periodKey: string, extension: "xlsx" | "csv"): str
   return `planilla-${periodKey}.${extension}`;
 }
 
+/**
+ * The currency to print next to the numeric totals: the single currency every
+ * live amount shares, or "varias monedas" if an admin changed
+ * `payments.currency` mid-cycle (§6). `null` when there is no money at all.
+ */
+export function sharedCurrencyLabel(sheet: ConsolidatedSheet): string | null {
+  const currencies = new Set(
+    sheet.rows
+      .filter((row) => row.offeringState === "PENDING" || row.offeringState === "APPROVED")
+      .map((row) => row.currency)
+      .filter((value): value is string => value !== null),
+  );
+  if (currencies.size === 0) return null;
+  if (currencies.size === 1) return [...currencies][0] ?? null;
+  return "varias monedas";
+}
+
 // -----------------------------------------------------------------------------
 // Service
 // -----------------------------------------------------------------------------
