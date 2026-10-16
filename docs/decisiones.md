@@ -761,3 +761,29 @@ resuelve hacia lo más configurable (spec §18.7).
   ocultas; una tasa de cumplimiento sobre semanas viejas es exacta (la obligación
   es el denominador correcto, no las filas de usuario). `lib/dashboard.ts`
   documenta en su cabecera que la tasa es un ratio y no pasa por `lib/money.ts`.
+
+### D51 - Tabla maestra §8.5: doce filtros normalizados, paginación real y una sola matriz de exportación
+- Contexto: los doce filtros obligatorios llegan por la URL (compartible), pero
+  una URL editada a mano no puede romper la página ni ensanchar la lectura; y
+  la exportación (CSV/XLSX y "exportar selección") no puede convertirse en una
+  segunda definición de columnas que se desincronice de la pantalla.
+- Decisión: los filtros se normalizan en el servidor
+  (`parsePaymentsFilters`): un valor mal formado se descarta — jamás toca SQL —
+  un rango invertido se intercambia, la moneda sube a mayúsculas y los códigos
+  se validan por forma (uuid, fecha UTC real, decimal ≤ 2 decimales, nivel
+  0..99). "Subárbol de X" usa `snapshot_path` del reporte contra el `path`
+  ACTUAL de X: responde "quién estaba bajo X cuando pagó", estable aunque el
+  árbol se mueva. Los filtros de campos personalizados (`cf_<code>`) solo se
+  aceptan para campos con `show_in_dashboard`. La tabla pagina server-side
+  (`page`/`page_size`, default 50, máximo 200) con `ORDER BY reported_at DESC`.
+  La pantalla, el CSV y el XLSX comparten `PAYMENTS_HEADERS + paymentsMatrix`
+  (16 columnas, estado en español, `-` para vacíos); la exportación completa
+  corta en 10 000 filas con un 400 explicativo en vez de truncar en silencio, y
+  la exportación de selección valida y deduplica los ids con el mismo tope.
+  La columna Usuario enlaza a la ficha de red (`/portal/network/<id>`, visible
+  para staff), porque `/admin/usuarios` todavía no existe (F6).
+- Consecuencias: una sola definición de fila/columna sirve pantalla y archivos;
+  una URL rota degrada a "menos filtros", nunca a un 500 ni a una lectura más
+  amplia; el nivel del reporte es el actual (`u.depth`) y el árbol de
+  filtrado es el histórico (`snapshot_path`) — dos preguntas distintas con la
+  columna que corresponde a cada una.
