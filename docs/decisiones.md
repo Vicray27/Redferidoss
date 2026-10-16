@@ -675,3 +675,22 @@ resuelve hacia lo más configurable (spec §18.7).
   ruta de exportación y la página comparten el servicio `createReportsService`
   (guard staff ANTES de cualquier lectura, D39) y el mismo nombre de archivo
   (`planilla-<period_key>.xlsx|csv`).
+
+### D47 - El XLSX se genera con write-excel-file dentro del route handler
+- Contexto: §8.4 pide exportar la planilla. Las opciones eran `exceljs`
+  (arrastra un árbol de streaming grande para un caso de uso plano), `xlsx`
+  (SheetJS, licencia y bundle de la edición community) y `write-excel-file`
+  (declarativa: filas de celdas, sin dependencias nativas, un solo import
+  `write-excel-file/node` para producir un Buffer en el servidor).
+- Decisión: `write-excel-file@4.1.1` como única dependencia nueva del slice, y
+  la generación vive en `app/api/admin/reports/export/route.ts` (runtime Node),
+  consumiendo la MISMA matriz que la tabla (`sheetMatrix`): fila de encabezados
+  en negrita, orientación apaisada y los anchos de `SHEET_COLUMN_WIDTHS`. El
+  CSV no usa librería: son 8 líneas de RFC 4180 (comillas duplicadas, CRLF,
+  BOM UTF-8) en `lib/reports.ts`, y una dependencia menos que actualizar. El
+  nombre del archivo es `planilla-<period_key>.<ext>` y la respuesta viaja con
+  `Cache-Control: private, no-store` porque lleva nombres y montos.
+- Consecuencias: no existe una segunda definición de las columnas — agregar una
+  pasa por `SHEET_HEADERS` + `sheetMatrix` + `SHEET_COLUMN_WIDTHS` y aparece en
+  pantalla, CSV, XLSX e impresión a la vez. `format` por defecto es `xlsx`; un
+  `format` desconocido responde 400 `VALIDATION_FAILED` antes de tocar la base.

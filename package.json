@@ -36,6 +36,7 @@
     "react-hook-form": "^7.89.0",
     "tailwind-merge": "^2.5.0",
     "tailwindcss-animate": "^1.0.7",
+    "write-excel-file": "^4.1.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
