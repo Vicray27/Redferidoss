@@ -646,3 +646,32 @@ resuelve hacia lo más configurable (spec §18.7).
   futuro almacenamiento S3 reemplaza solo esta ruta y `lib/storage.ts`; los
   tests de ruta existentes (`uploads-route`) marcan el patrón para cubrirla si
   hiciera falta.
+
+### D46 - Planilla consolidada (§8.4): qué es una fila, qué suma cada total
+- Contexto: §8.4 pide una "planilla consolidada" por ciclo (persona, nivel,
+  reporte, contadores, ofrenda, estado) y §8.5 la reserva al staff. Faltaba
+  fijar qué personas aparecen cuando los datos viven en tres tablas
+  (`cycle_obligations`, `weekly_reports`, `payment_reports`) y cómo se cuentan
+  los totales, sobre todo con la doble lectura del reporte semanal (D38): una
+  fila reportada con todo en cero no puede contarse igual que una persona que
+  nunca reportó.
+- Decisión: la fila es toda persona viva (`deleted_at IS NULL`) con obligación
+  O reporte semanal O reporte de pago en el ciclo — la unión es deliberada: una
+  planilla jamás muestra dinero que pertenece a ninguna fila. Los estados de la
+  columna "Reporte" son tres: "Reportó", "Sin actividad" (fila existe y todos
+  los contadores/visitas están en cero, D38) y "No reportó" (no hay fila, D38).
+  Los totales se derivan en JavaScript de las MISMAS filas que la tabla
+  renderiza (una segunda consulta que sume aparte es un total que algún día
+  discrepará de la tabla): `offered` = reportes de pago vivos (PENDING o
+  APPROVED; un REJECTED no es ofrenda), `amountTotal` = suma exacta en céntimos
+  BigInt (A14) de los montos vivos — siempre igual a la suma de las filas
+  listadas — y `amountApproved` = solo los APPROVED. `visitors` suma los
+  nombres de visitantes de las filas reportadas. La ofrenda elegida por fila es
+  el reporte vivo si existe (a lo sumo uno por `uq_report_user_cycle`, D4) y,
+  si no, el REJECTED más reciente, para que el descarte quede visible.
+- Consecuencias: la pantalla, el CSV, el XLSX y la vista de impresión consumen
+  la misma matriz de filas (`SHEET_HEADERS` + `sheetMatrix`), así que agregar
+  una columna es una sola edición y las cuatro caras no pueden divergir. La
+  ruta de exportación y la página comparten el servicio `createReportsService`
+  (guard staff ANTES de cualquier lectura, D39) y el mismo nombre de archivo
+  (`planilla-<period_key>.xlsx|csv`).
