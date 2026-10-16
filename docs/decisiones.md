@@ -849,3 +849,26 @@ resuelve hacia lo más configurable (spec §18.7).
   todo dato nuevo pasa por el servicio con su marcador `@dash:*` y su test. Las
   gráficas siguen siendo verificables sin DOM porque la geometría vive en
   `lib/charts.ts` (D49); imprimir la pantalla imprime las gráficas como HTML.
+
+### D54 - Cumplimiento (F5): cuatro estados sin ambigüedad, tope de 500 y drill-down a la tabla maestra
+- Contexto: §8.5 pide la matriz persona × semana con verde/amarillo/rojo/gris y
+  drill-down por persona. "Cumplimiento" admite estados que NO son
+  incumplimiento (sin obligación, exenta) y una red grande puede volver la
+  matriz impracticable; además, un drill-down como pantalla nueva duplicaría
+  lectura, exportación y acciones que la tabla maestra ya tiene.
+- Decisión: cuatro estados con semántica fija (`complianceState`, con D4 para
+  la obligación): `approved` (algún reporte APPROVED), `pending` (reporte
+  PENDING, u obligación que todavía debe), `missed` (solo un rechazo, u
+  obligación MISSED), `exempt` (obligación EXEMPT o sin obligación). Las
+  etiquetas viven en un solo mapa (`COMPLIANCE_STATE_LABELS`) para que leyenda,
+  títulos de celda y cualquier vista futura usen las mismas palabras, y los
+  colores reutilizan `heatColor` (D49): verde/ámbar/rojo/gris, el mismo idioma
+  visual del mapa de calor del panel. La matriz corta en 500 personas
+  (`COMPLIANCE_MAX_USERS`, detectado con cap+1) y AVISA del truncado en vez de
+  presentar media red como la red entera; las ventanas son 4/12/26
+  (`COMPLIANCE_WINDOWS`, default 12). Cada celda no exenta enlaza a la tabla
+  maestra con filtros existentes: `/admin/pagos?userId=…&cycles=…`.
+- Consecuencias: el drill-down hereda filtros, paginación, exportación y
+  acciones en lote de la tabla maestra sin código nuevo; agregar un estado o
+  cambiar una etiqueta toca un mapa y una función; y "gris" nunca se lee como
+  incumplimiento porque la leyenda lo nombra.

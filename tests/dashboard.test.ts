@@ -12,6 +12,7 @@ import { ForbiddenError, type SessionActor } from "../lib/authz";
 import { NotFoundError } from "../lib/errors";
 import {
   COMPLIANCE_MAX_USERS,
+  COMPLIANCE_STATE_LABELS,
   complianceState,
   createDashboardService,
   resolveWindow,
@@ -451,5 +452,38 @@ describe("sumDecimals", () => {
     expect(sumDecimals(["0.10", "0.20"])).toBe("0.30");
     expect(sumDecimals(["1.99", "0.01"])).toBe("2.00");
     expect(sumDecimals([])).toBe("0.00");
+  });
+});
+
+// --- matrix labels (D54) ------------------------------------------------------
+
+describe("COMPLIANCE_STATE_LABELS", () => {
+  it("names every state exactly once, in Spanish", () => {
+    expect(Object.keys(COMPLIANCE_STATE_LABELS).sort()).toEqual([
+      "approved",
+      "exempt",
+      "missed",
+      "pending",
+    ]);
+    expect(COMPLIANCE_STATE_LABELS.approved).toBe("Aprobado");
+    expect(COMPLIANCE_STATE_LABELS.pending).toBe("Pendiente por reportar");
+    expect(COMPLIANCE_STATE_LABELS.missed).toBe("Incumplido");
+    expect(COMPLIANCE_STATE_LABELS.exempt).toBe("Exento / sin obligación");
+  });
+
+  it("labels exactly the states complianceState can return", () => {
+    const states = new Set(
+      [
+        { obligationId: "o", obligationStatus: "PENDING", approved: true, pending: null, rejected: null },
+        { obligationId: "o", obligationStatus: "PENDING", approved: null, pending: true, rejected: null },
+        { obligationId: "o", obligationStatus: "MISSED", approved: null, pending: null, rejected: true },
+        { obligationId: null, obligationStatus: null, approved: null, pending: null, rejected: null },
+      ].map((row) => complianceState(row)),
+    );
+
+    expect([...states].sort()).toEqual(["approved", "exempt", "missed", "pending"]);
+    for (const state of states) {
+      expect(COMPLIANCE_STATE_LABELS[state]).toBeTruthy();
+    }
   });
 });

@@ -290,6 +290,18 @@ export function complianceState(row: {
   return "exempt";
 }
 
+/**
+ * The Spanish labels of the matrix (D54). One map so the legend, the cell
+ * titles and every drill-down share words: a person reading the legend and a
+ * person hovering a cell must not see two names for the same state.
+ */
+export const COMPLIANCE_STATE_LABELS: Record<ComplianceState, string> = {
+  approved: "Aprobado",
+  pending: "Pendiente por reportar",
+  missed: "Incumplido",
+  exempt: "Exento / sin obligación",
+};
+
 export function createDashboardService(
   db: DashboardDb,
   authz: DashboardAuthz,
