@@ -15,12 +15,17 @@ import { createNotificationsService } from "@/lib/notifications";
 // The unread badge is one click stale on a cached page: never cache this one.
 export const dynamic = "force-dynamic";
 
-export default async function AdminNotificationsPage() {
+export default async function AdminNotificationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ antes?: string }>;
+}) {
   const session = await requireStaffSession("/admin/notificaciones");
+  const { antes } = await searchParams;
 
   const notifications = createNotificationsService(prisma);
-  const [items, unreadCount] = await Promise.all([
-    notifications.listForUser(session.userId),
+  const [page, unreadCount] = await Promise.all([
+    notifications.listForUser(session.userId, { before: antes ?? null }),
     notifications.unreadCount(session.userId),
   ]);
 
@@ -30,7 +35,11 @@ export default async function AdminNotificationsPage() {
       title="Notificaciones"
       description="Los avisos del sistema: revisión de aportes y novedades de la red."
     >
-      <NotificationsInbox items={items} unreadCount={unreadCount} />
+      <NotificationsInbox
+        items={page.items}
+        unreadCount={unreadCount}
+        olderHref={page.nextCursor ? `?antes=${page.nextCursor}` : null}
+      />
     </SessionShell>
   );
 }

@@ -7,8 +7,9 @@
 //   2. an unset CRON_SECRET is a 503, never an open door — an endpoint that
 //      fails open because a variable is missing is a public job trigger;
 //   3. a registered job with `implemented: true` runs and answers its summary
-//      in the §10 envelope; a registered but unimplemented one answers 501,
-//      which is the honest answer until F7 ships its body (D1).
+//      in the §10 envelope; a registered but unimplemented one answers 501 —
+//      the honest answer for any future registry-first job (all six §9 jobs
+//      are implemented since F7, D59–D62).
 //
 // `executeJob` receives the process-wide client and settings reader; the job
 // bodies are dependency-injected (jobs/execute.ts) and idempotent by
@@ -87,7 +88,7 @@ export async function POST(
         ok: false,
         error: {
           code: "NOT_IMPLEMENTED",
-          message: `Job "${job.name}" is not implemented yet. Scheduled jobs land in F7.`,
+          message: `Job "${job.name}" is not implemented in this build.`,
         },
         data: { job: job.name, schedule: job.schedule, implemented: job.implemented },
       },

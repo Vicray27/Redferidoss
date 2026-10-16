@@ -1433,3 +1433,36 @@ resuelve hacia lo más configurable (spec §18.7).
   queda vacío, el marcador no existe y la base compartida no se tocó; el gate
   unitario no cambió (`vitest` incluye solo `tests/**/*.test.ts`). El costo es
   ~30 s por corrida (migraciones + seed) a cambio de aislamiento total.
+
+### D73 - Bandeja con keyset, copia del 501 al día y exportación > 10.000 filas diferida (F8)
+- Contexto: §14 pide que las exportaciones de más de 10.000 filas se generen
+  en background con descarga por enlace. La bandeja de notificaciones (F7)
+  listaba con LIMIT fijo y sin segunda página, y la copia del 501 del cron
+  decía "Scheduled jobs land in F7" — obsoleta desde que los seis jobs están
+  implementados (D59–D62), aunque la rama sigue siendo la respuesta honesta
+  para cualquier job futuro registry-first.
+- Decisión: (1) Keyset en `listForUser`: el cursor es el `id` del último aviso
+  visto (`?antes=<uuid>`), y el orden total es la tupla `(created_at, id)` —
+  `created_at` no es único porque los jobs insertan en bloque. El cursor se
+  resuelve con un subselect sobre la fila del cursor (cast `::uuid` directo,
+  `LIMIT n+1` decide `nextCursor` sin COUNT) en vez de serializar el timestamp:
+  un Date de JS trunca microsegundos y podría perder filas del mismo
+  milisegundo. Cursor inválido degrada a primera página; cursor inexistente o
+  ajeno devuelve página vacía (el subselect no matchea: sin fuga y sin error).
+  El retorno pasa a `{ items, nextCursor }` y el enlace "Ver más antiguas" es
+  un `<a>` plano (SSR, sin JS). Sin migración nueva: el predicado usa
+  `idx_notifications_user (user_id, created_at DESC)`. (2) Se corrige el
+  mensaje del 501; el código `NOT_IMPLEMENTED` no cambia. (3) §14 > 10.000
+  filas: NO se implementa la generación en background. La exportación maestra
+  de pagos ya rechaza explícitamente por encima de `PAYMENTS_EXPORT_MAX_ROWS`
+  (10.000) — falla segura, sin truncado silencioso — y la planilla consolidada
+  (una fila por persona) se genera síncrona y sin tope; con la red actual
+  (~1.900 personas) está lejos del umbral. Divergencia documentada en el
+  README.
+- Consecuencias: 3 tests nuevos en `tests/notifications.test.ts` (882 totales,
+  55 archivos); sonda viva contra la base de desarrollo con 6 filas (misma
+  marca de tiempo, una 500 µs después): la paginación reconstruye exactamente
+  el ORDER BY sin duplicados ni saltos, y un cursor inexistente devuelve
+  página vacía. E2E re-verificado con las páginas nuevas. Si el volumen real
+  supera 10.000 filas por exportación, la generación en background queda como
+  deuda explícita.

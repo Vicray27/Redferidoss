@@ -15,12 +15,17 @@ import { createNotificationsService } from "@/lib/notifications";
 // The unread badge is one click stale on a cached page: never cache this one.
 export const dynamic = "force-dynamic";
 
-export default async function PortalNotificationsPage() {
+export default async function PortalNotificationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ antes?: string }>;
+}) {
   const session = await requireSession("/portal/notificaciones");
+  const { antes } = await searchParams;
 
   const notifications = createNotificationsService(prisma);
-  const [items, unreadCount] = await Promise.all([
-    notifications.listForUser(session.userId),
+  const [page, unreadCount] = await Promise.all([
+    notifications.listForUser(session.userId, { before: antes ?? null }),
     notifications.unreadCount(session.userId),
   ]);
 
@@ -30,7 +35,11 @@ export default async function PortalNotificationsPage() {
       title="Notificaciones"
       description="Los avisos de tu semana y de tus aportes, en un solo lugar."
     >
-      <NotificationsInbox items={items} unreadCount={unreadCount} />
+      <NotificationsInbox
+        items={page.items}
+        unreadCount={unreadCount}
+        olderHref={page.nextCursor ? `?antes=${page.nextCursor}` : null}
+      />
     </SessionShell>
   );
 }

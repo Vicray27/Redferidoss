@@ -21,9 +21,12 @@ import { cn } from "@/lib/utils";
 export function NotificationsInbox({
   items,
   unreadCount,
+  olderHref = null,
 }: {
   items: NotificationItem[];
   unreadCount: number;
+  /** Keyset "older page" link (`?antes=<id>`); null when the list is exhausted. */
+  olderHref?: string | null;
 }) {
   if (items.length === 0) {
     return (
@@ -84,6 +87,14 @@ export function NotificationsInbox({
           );
         })}
       </ul>
+
+      {olderHref ? (
+        <div className="flex justify-center">
+          <a href={olderHref} className="text-sm underline underline-offset-4">
+            Ver más antiguas
+          </a>
+        </div>
+      ) : null}
     </div>
   );
 }

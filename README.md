@@ -1,4 +1,4 @@
-# Red de Referidos — F1 Base (PR1 scaffold · PR2 0001_init · PR3 schema.prisma · PR4 seed + libs)
+# Red de Referidos — F8 Endurecimiento (F1 Base: PR1 scaffold · PR2 0001_init · PR3 schema.prisma · PR4 seed + libs)
 
 Fundación ejecutable. Las entregas llegan apiladas: PR2 migración SQL
 autoritativa `0001_init`, PR3 espejo Prisma, PR4 seed + librería de settings +
@@ -21,15 +21,16 @@ pnpm install
 cp .env.example .env      # Windows: Copy-Item .env.example .env
 pnpm db:validate          # prisma validate
 pnpm db:generate          # prisma generate -> cliente tipado
-pnpm db:check:drift       # compara schema.prisma contra 0001_init (exit 1 si hay drift)
+pnpm db:check:drift       # compara schema.prisma contra todas las migraciones (exit 1 si hay drift)
 pnpm typecheck            # tsc --noEmit
-pnpm test                 # vitest run (47+ tests, sin base de datos)
+pnpm test                 # vitest run (882 tests, sin base de datos)
 ```
 
 `pnpm db:check:drift` es la red de seguridad del DDL: verifica enums,
 tablas, columnas (nombre, tipo, nulabilidad), claves primarias e índices en
-AMBAS direcciones, y exige que todo índice que solo existe en el SQL esté
-listado en el bloque "Indexes NOT redeclared here" del schema.
+AMBAS direcciones contra **todas** las migraciones (`0001_init` …
+`0005_mv_payment_weekly`), y exige que todo índice que solo existe en el SQL
+esté listado en el bloque "Indexes NOT redeclared here" del schema.
 
 `pnpm test` cubre el otro lado: `tests/settings-catalog.test.ts` deriva del
 propio `migration.sql` qué settings lee el SQL en runtime y cuáles sólo
@@ -131,12 +132,14 @@ inmediato, hay que cerrar sesión o reiniciar el contenedor `app`.
 
 ## Base de datos (PR2 DDL + PR3 espejo)
 
-`prisma/migrations/0001_init/migration.sql` es la ÚNICA autoridad de DDL
-(extensions ltree/pgcrypto/citext, 7 enums, 17 tablas, índices §5, EXCLUDE de
-ciclos, triggers de árbol y `fn_user_move()`).
+`prisma/migrations/*/migration.sql` es la ÚNICA autoridad de DDL. `0001_init`
+trae extensions ltree/pgcrypto/citext, 7 enums, 17 tablas, índices §5, EXCLUDE
+de ciclos, triggers de árbol y `fn_user_move()`; `0002_settings_notify`,
+`0003_weekly_reports`, `0004_tree_rebuild` y `0005_mv_payment_weekly` la
+extienden (18 tablas en total + la vista materializada).
 
 `prisma/schema.prisma` es su espejo exacto: mismos enums (tipos en minúsculas,
-idénticos al SQL), mismas 17 tablas, mismos nombres de columna y tipos. Las
+idénticos al SQL), mismas 18 tablas, mismos nombres de columna y tipos. Las
 limitaciones de Prisma 6 se resuelven y documentan en el header del schema:
 
 | SQL | Prisma |
@@ -171,8 +174,8 @@ cd /opt/red-referidos
 # 2. Nombre de la red del stack (por defecto <stack>_default):
 docker network ls | grep <stack>
 
-# 3. Migrar (aplica 0001_init y 0002_settings_notify; `migrate deploy` es
-#    idempotente, volver a correrlo no reaplica nada):
+# 3. Migrar (aplica todas las migraciones pendientes, 0001_init … 0005_mv_payment_weekly;
+#    `migrate deploy` es idempotente, volver a correrlo no reaplica nada):
 docker run --rm -v "$PWD:/app" -w /app --network <red-del-stack> \
   -e DATABASE_URL="postgresql://referidos:<password>@postgres:5432/referidos?schema=public" \
   node:24-alpine sh -lc "corepack enable && pnpm install --no-frozen-lockfile && pnpm db:migrate"
@@ -186,7 +189,7 @@ docker run --rm -v "$PWD:/app" -w /app --network <red-del-stack> \
   node:24-alpine sh -lc "corepack enable && pnpm install --no-frozen-lockfile && pnpm seed:root"
 
 # 5. Verificar:
-docker exec -it <contenedor-postgres> psql -U referidos -d referidos -c '\dt'          # 17 tablas
+docker exec -it <contenedor-postgres> psql -U referidos -d referidos -c '\dt'          # 18 tablas
 docker exec -it <contenedor-postgres> psql -U referidos -d referidos \
   -c 'SELECT count(*) FROM settings;'      # 40
 docker exec -it <contenedor-postgres> psql -U referidos -d referidos \
@@ -544,9 +547,63 @@ El shell de sesión muestra el badge de no leídas en ambos portales.
 ### Verificación local
 
 ```sh
-pnpm test        # 733 tests de unidad, sin base de datos
+pnpm test        # 882 tests de unidad, sin base de datos
 pnpm typecheck
 pnpm db:check:drift
 ```
 
 Las decisiones D59–D62 están en `docs/decisiones.md`.
+
+## El endurecimiento (F8)
+
+Cierre de la fase: cabeceras de seguridad y umbrales configurables, el
+dashboard sobre la vista materializada `mv_payment_weekly`, `seed:demo` a
+escala, cobertura medida de `lib/` con umbral, el viaje E2E completo sobre una
+base descartable y la bandeja de notificaciones con paginación keyset
+(D63–D73).
+
+### Endpoints
+
+| Método y ruta | Qué hace | Protección |
+|---|---|---|
+| `GET /portal/notificaciones?antes=<id>` | Página siguiente (más antigua) de la bandeja; el cursor es el id del último aviso visto (D73). | Sesión |
+| `GET /admin/notificaciones?antes=<id>` | Ídem para staff; mismo contrato. | Sesión de staff |
+
+### Artefactos de la fase
+
+| Archivo | Qué hace |
+|---|---|
+| `lib/security-settings.ts` | Lee `security.*` del catálogo con fallback explícito (D64). |
+| `lib/security-headers.ts` | CSP y cabeceras en todas las respuestas; `style-src 'unsafe-inline'` a propósito (D63). |
+| `lib/mask.ts` | Enmascarado de datos sensibles al serializar (D66). |
+| `prisma/migrations/0005_mv_payment_weekly/` | La MV con datos y su índice único, requisito de `REFRESH CONCURRENTLY` (D67). |
+| `lib/mv-refresh.ts` | Refresh best-effort al aprobar + cada 5 min desde el scheduler (D67/D68). |
+| `prisma/seed-demo.ts` | Demo a escala: presets de §15 y escenario de volumen; cumplimiento al 85 % modelado por persona (D70). |
+| `vitest.config.ts` | Umbral global del 80 % de líneas sobre `lib/**` (D71). |
+| `playwright.config.ts` + `e2e/` | El viaje de §16 completo contra una base descartable por corrida (D72). |
+| `lib/notifications.ts` | Keyset en `listForUser`: cursor por id, tupla `(created_at, id)` y `LIMIT n+1` (D73). |
+
+### Verificación local
+
+```sh
+pnpm test             # 882 tests de unidad, sin base de datos
+pnpm test:coverage    # umbral 80 % de líneas en lib/** (actual: ~86 %)
+pnpm test:e2e         # viaje completo en base descartable (detener antes pnpm dev)
+pnpm typecheck
+pnpm db:check:drift
+pnpm build
+```
+
+### Divergencias documentadas (F8)
+
+- Exportaciones > 10.000 filas (§14): no hay generación en background. La
+  exportación maestra de pagos rechaza explícitamente por encima de
+  `PAYMENTS_EXPORT_MAX_ROWS` (10.000) — falla segura, sin truncado silencioso —
+  y la planilla consolidada (una fila por persona) se genera síncrona y sin
+  tope; con la red actual (~1.900 personas) está lejos del umbral. Queda como
+  deuda explícita si el volumen real lo supera (D73).
+- `security.require_2fa_for_admin`: el setting existe en el catálogo (default
+  `false`) y ningún flujo lo impone todavía; §6 lo lista como parámetro, no
+  como funcionalidad de una fase.
+
+Las decisiones D63–D73 están en `docs/decisiones.md`.

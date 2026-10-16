@@ -17,6 +17,7 @@ import {
 } from "../lib/notifications";
 
 const USER = "11111111-1111-4111-8111-111111111111";
+const CURSOR_ID = "22222222-2222-4222-8222-222222222222";
 const NOW = new Date("2026-10-15T12:00:00.000Z");
 
 type Handler = (values: unknown[]) => unknown;
@@ -110,11 +111,12 @@ describe("listForUser", () => {
   it("lists newest-first with the default limit and the ownership predicate", async () => {
     const { db, service } = build();
 
-    await expect(service.listForUser(USER)).resolves.toEqual([ITEM]);
+    await expect(service.listForUser(USER)).resolves.toEqual({ items: [ITEM], nextCursor: null });
 
     const call = db.callsFor("list")[0]!;
-    expect(call.values).toEqual([USER, DEFAULT_NOTIFICATIONS_LIMIT]);
-    expect(call.text).toContain("ORDER BY created_at DESC");
+    expect(call.values).toEqual([USER, null, null, USER, DEFAULT_NOTIFICATIONS_LIMIT + 1]);
+    expect(call.text).toContain("ORDER BY created_at DESC, id DESC");
+    expect(call.text).toContain("(created_at, id) <");
     expect(call.text).toContain("user_id =");
   });
 
@@ -125,11 +127,47 @@ describe("listForUser", () => {
     await service.listForUser(USER, { limit: 0 });
     await service.listForUser(USER, { limit: Number.NaN });
 
-    expect(db.callsFor("list").map((call) => call.values[1])).toEqual([
-      MAX_NOTIFICATIONS_LIMIT,
-      1,
-      DEFAULT_NOTIFICATIONS_LIMIT,
+    expect(db.callsFor("list").map((call) => call.values[4])).toEqual([
+      MAX_NOTIFICATIONS_LIMIT + 1,
+      2,
+      DEFAULT_NOTIFICATIONS_LIMIT + 1,
     ]);
+  });
+
+  it("passes a valid cursor id to the keyset predicate, scoped to the user", async () => {
+    const { db, service } = build();
+
+    await service.listForUser(USER, { before: CURSOR_ID });
+
+    const call = db.callsFor("list")[0]!;
+    expect(call.values).toEqual([USER, CURSOR_ID, CURSOR_ID, USER, DEFAULT_NOTIFICATIONS_LIMIT + 1]);
+  });
+
+  it("degrades a malformed cursor to the first page instead of failing", async () => {
+    const { db, service } = build();
+
+    await service.listForUser(USER, { before: "'; DROP TABLE notifications; --" });
+
+    expect(db.callsFor("list")[0]!.values[1]).toBeNull();
+  });
+
+  it("returns the last item's id as nextCursor only when there is a next page", async () => {
+    const { db, service } = build();
+    const second = { ...ITEM, id: "ntf-2" };
+
+    // n+1 rows prove a next page: the extra row is dropped, its predecessor is the cursor.
+    db.on("list", () => [ITEM, second, { ...ITEM, id: "ntf-3" }]);
+    await expect(service.listForUser(USER, { limit: 2 })).resolves.toEqual({
+      items: [ITEM, second],
+      nextCursor: second.id,
+    });
+
+    // Exactly `limit` rows: the list is exhausted, no cursor.
+    db.on("list", () => [ITEM, second]);
+    await expect(service.listForUser(USER, { limit: 2 })).resolves.toEqual({
+      items: [ITEM, second],
+      nextCursor: null,
+    });
   });
 });
 
