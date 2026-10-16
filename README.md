@@ -371,3 +371,41 @@ pnpm db:check:drift
 ```
 
 Las decisiones D37–D45 están en `docs/decisiones.md`.
+
+## La planilla consolidada (F4b)
+
+La lectura de conjunto del staff: una fila por persona con obligación, reporte
+semanal u ofrenda en el ciclo (§8.4), con los totales derivados de las MISMAS
+filas que se muestran, impresión A4 (el PDF sale del diálogo del navegador) y
+exportación a Excel o CSV (D46, D47, D48).
+
+### Endpoints
+
+| Método y ruta | Qué hace | Protección |
+|---|---|---|
+| `GET /api/admin/reports/export?cycle=…&format=xlsx\|csv` | Descarga la planilla consolidada de esa semana: XLSX (write-excel-file, D47) o CSV RFC 4180 con BOM porque Excel lo necesita para leer acentos. `format` por defecto `xlsx`; nombre `planilla-<period_key>.<ext>`. | `requireApiSession` + guard staff del servicio (D39) + `Cache-Control: private, no-store` |
+
+Al fallar responde el envelope de §10; al responder bien, el cuerpo es el archivo.
+
+### Páginas
+
+| Ruta | Qué hace |
+|---|---|
+| `/admin/reportes` | Planilla consolidada: selector de semana, tira de totales (personas, reportaron, no reportaron, asistieron, ofrendaron, montos, visitantes) y la matriz de 22 columnas de D46. Enlaces a impresión y a las dos exportaciones. |
+| `/admin/reportes/imprimir?cycle=…` | Cara de papel: A4 apaisada, sin chrome de navegación, con sello "Generada el…"; el botón "Imprimir / Guardar PDF" abre el diálogo del navegador (D48). |
+
+### Librerías de la fase
+
+| Archivo | Qué hace |
+|---|---|
+| `lib/reports.ts` | `createReportsService` (solo staff): ciclos y planilla consolidada del ciclo; `SHEET_HEADERS` + `sheetMatrix` + `sheetCsv` son la única definición de las filas — pantalla, CSV, XLSX e impresión consumen esa matriz — y los totales se suman en céntimos BigInt sobre las mismas filas (`@reports:*`). |
+
+### Verificación local
+
+```sh
+pnpm test        # 534 tests de unidad, sin base de datos
+pnpm typecheck
+pnpm db:check:drift
+```
+
+Las decisiones D46–D48 están en `docs/decisiones.md`.
