@@ -960,8 +960,16 @@ resuelve hacia lo más configurable (spec §18.7).
   los `fieldErrors` que el servidor devuelve por campo; la cola de revisión
   agrega `label: valor` en la MISMA consulta con un `jsonb_agg` lateral
   ordenado por `sort_order, code`, y el formato de lectura vive en
-  `formatCustomValue` (bool → Sí/No, listas → separadas por coma). Los campos
-  FILE siguen sin colectarse (D25).
+  `formatCustomValue` (bool → Sí/No, listas → separadas por coma). La tabla
+  maestra y ambas puertas de la exportación (conjunto filtrado y selección)
+  comparten UN contrato de columnas: las 16 fijas de §8.5 más UNA por campo de
+  panel (`show_in_dashboard` AND `is_active`), con la etiqueta del campo como
+  encabezado y el valor formateado en la fila. Los valores viajan en la MISMA
+  consulta de filas como un `jsonb_object_agg` lateral por `code` — el count de
+  la paginación no lo carga — y la lista de campos se lee una vez por request,
+  de modo que el archivo de la selección no puede llevar un encabezado distinto
+  al de la tabla; retirar un campo del panel lo retira de las columnas sin
+  tocar las filas. Los campos FILE siguen sin colectarse (D25).
 - Consecuencias: un envío con datos personalizados es atómico —o queda entero o
   no queda—; rechazar y reenviar el mismo valor funciona y la persona ve por
   campo exactamente qué corregir; la revisión muestra los datos del aporte sin

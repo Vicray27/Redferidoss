@@ -21,11 +21,13 @@ import {
   PAYMENTS_PAGE_SIZE_DEFAULT,
   PAYMENTS_PAGE_SIZE_MAX,
   paymentsFileBase,
+  paymentsHeaders,
   paymentsMatrix,
   type PaymentRow,
   type PaymentsAdminAuthz,
   type PaymentsAdminDb,
   type PaymentsAdminFilters,
+  type PaymentsExportField,
   type SearchParamsLike,
 } from "../lib/payments-admin";
 
@@ -142,6 +144,7 @@ function row(overrides: Partial<PaymentRow> = {}): PaymentRow {
     reviewedByName: null,
     reviewedAt: null,
     reviewNote: null,
+    custom: {},
     ...overrides,
   };
 }
@@ -429,6 +432,29 @@ describe("exportRows / selectedRows", () => {
   });
 });
 
+describe("dashboard custom values in the row SQL (D57)", () => {
+  it("aggregates the dashboard fields in the row reads but not in the count", async () => {
+    const { authz } = makeAuthz();
+    const fake = withRows([row()]);
+    const service = createPaymentsAdminService(fake, authz);
+    const filters = parsePaymentsFilters(params());
+
+    await service.listPayments(STAFF, filters);
+    const rowsSql = collectSql(fake.valuesOf("rows")).join(" ");
+    expect(rowsSql).toContain("jsonb_object_agg");
+    expect(rowsSql).toContain("show_in_dashboard");
+    expect(rowsSql).toContain("'PAYMENT_REPORT'");
+    // The count only answers "how many": it must not carry the aggregation.
+    expect(collectSql(fake.valuesOf("count")).join(" ")).not.toContain("jsonb_object_agg");
+
+    await service.exportRows(STAFF, filters);
+    expect(collectSql(fake.valuesOf("rows")).join(" ")).toContain("jsonb_object_agg");
+
+    await service.selectedRows(STAFF, [U1]);
+    expect(collectSql(fake.valuesOf("selected")).join(" ")).toContain("jsonb_object_agg");
+  });
+});
+
 // --- export matrix -----------------------------------------------------------
 
 describe("paymentsMatrix", () => {
@@ -474,6 +500,46 @@ describe("paymentsMatrix", () => {
     expect(cells[13]).toBe("Root");
     expect(cells[14]).toBe("13/10/2026");
     expect(cells[15]).toBe("OK");
+  });
+
+  it("appends one column per dashboard field, formatted like the review queue (D57)", () => {
+    const fields: PaymentsExportField[] = [
+      { code: "cargo", label: "Cargo" },
+      { code: "activo", label: "Activo" },
+      { code: "areas", label: "Áreas" },
+      { code: "nota", label: "Nota" },
+    ];
+    expect(paymentsHeaders(fields)).toEqual([...PAYMENTS_HEADERS, "Cargo", "Activo", "Áreas", "Nota"]);
+
+    const [cells] = paymentsMatrix(
+      [
+        row({
+          custom: {
+            cargo: "Diácono",
+            activo: true,
+            areas: ["Norte", "Sur"],
+            nota: null,
+          },
+        }),
+      ],
+      fields,
+    );
+    expect(cells).toHaveLength(20);
+    expect(cells.slice(16)).toEqual(["Diácono", "Sí", "Norte, Sur", "-"]);
+  });
+
+  it("renders a missing or empty custom value as the dash placeholder", () => {
+    const fields: PaymentsExportField[] = [{ code: "cargo", label: "Cargo" }];
+    const [cells] = paymentsMatrix([row({ custom: { cargo: "" } })], fields);
+    expect(cells[16]).toBe("-");
+    const [missing] = paymentsMatrix([row({ custom: {} })], fields);
+    expect(missing[16]).toBe("-");
+  });
+
+  it("keeps the fixed sixteen columns when no dashboard field is exposed", () => {
+    expect(paymentsHeaders([])).toHaveLength(16);
+    const [cells] = paymentsMatrix([row()], []);
+    expect(cells).toHaveLength(16);
   });
 });
 

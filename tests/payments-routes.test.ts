@@ -47,6 +47,7 @@ const PAYMENT = {
   reviewedByName: "Admin",
   reviewedAt: new Date(2026, 9, 14, 12, 0, 0),
   reviewNote: "ok",
+  custom: { cargo: "Diácono" },
 };
 
 const USER_OPTION = {
@@ -142,7 +143,7 @@ describe("GET /api/payments/export", () => {
     expect(queryRawMock).not.toHaveBeenCalled();
   });
 
-  it("downloads the filtered set as RFC 4180 CSV with the BOM and the 16 columns", async () => {
+  it("downloads the filtered set as RFC 4180 CSV with the BOM and the fixed columns plus the dashboard ones", async () => {
     signIn("admin-1");
 
     const response = await exportGet(
@@ -164,6 +165,10 @@ describe("GET /api/payments/export", () => {
     expect(text).toContain("Transferencia");
     expect(text).toContain("Aprobado");
     expect(text).toContain("12/10/2026");
+    // One dashboard-visible field = one extra column, label in the header and
+    // the report's value in the row (D57).
+    expect(text).toContain(",Cargo\r\n");
+    expect(text).toContain("Diácono");
 
     // The filters reached SQL: the approved status, the numeric bound and the
     // known custom field (cf_cargo), never as text concatenation.
@@ -213,11 +218,14 @@ describe("GET /api/payments/export", () => {
     const text = new TextDecoder().decode(await response.arrayBuffer());
     expect(text).toContain("Ana Pérez");
     expect(text).toContain("Aprobado");
-
-    // The selection door: no filtered-set statement, no custom-field read.
+    // The column set is read once for BOTH doors, so the selection export
+    // carries the same dashboard columns the table shows (D57)…
+    expect(text).toContain(",Cargo\r\n");
+    // …while the cf_ filter of the query string was ignored: the selection
+    // door never builds a filtered-set statement.
     expect(callsWith("@payadmin:selected")).toHaveLength(1);
     expect(callsWith("@payadmin:rows")).toHaveLength(0);
-    expect(callsWith("@dash:custom-fields")).toHaveLength(0);
+    expect(callsWith("@dash:custom-fields")).toHaveLength(1);
   });
 
   it("deduplicates the selection and drops malformed ids before SQL", async () => {

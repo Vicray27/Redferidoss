@@ -34,6 +34,7 @@
 import { Prisma } from "@prisma/client";
 
 import { ForbiddenError, isStaffActor, type SessionActor } from "./authz";
+import { formatCustomValue } from "./custom-fields";
 import { ValidationError, type Paginated } from "./errors";
 import { dateLabel } from "./reports";
 
@@ -127,6 +128,12 @@ export interface PaymentRow {
   reviewedByName: string | null;
   reviewedAt: Date | null;
   reviewNote: string | null;
+  /**
+   * Values of the dashboard-visible PAYMENT_REPORT fields, keyed by field
+   * `code` (D57). Always present: the row query aggregates it with a lateral
+   * `jsonb_object_agg`, defaulting to `{}` when the report has no values.
+   */
+  custom: Record<string, unknown>;
 }
 
 export type PaymentsPage = Paginated<PaymentRow>;
@@ -328,9 +335,29 @@ const ROW_COLUMNS_SQL = Prisma.sql`
   COALESCE(pm.label, r.method::text) AS method,
   r.reference AS reference, r.status::text AS status,
   r.proof_key AS "proofKey",
-  rv.full_name AS "reviewedByName", r.reviewed_at AS "reviewedAt",
-  r.review_note AS "reviewNote"
+  rv.full_name AS "reviewedByName", rv.reviewed_at AS "reviewedAt",
+  r.review_note AS "reviewNote",
+  COALESCE(cfd.custom, '{}'::jsonb) AS "custom"
 `;
+
+/**
+ * The dashboard-visible custom values of one report, aggregated by field code
+ * in a lateral join (D57). Only fields the admin flagged for the dashboard
+ * AND still active travel: the export columns and the filter row share
+ * exactly this set, so a column can never exist without its filter.
+ */
+const CUSTOM_VALUES_JOIN_SQL = Prisma.sql`
+  LEFT JOIN LATERAL (
+    SELECT jsonb_object_agg(cf.code, cfv.value) AS custom
+    FROM custom_field_values cfv
+    JOIN custom_fields cf ON cf.id = cfv.field_id
+    WHERE cfv.entity_id = r.id
+      AND cf.entity = 'PAYMENT_REPORT' AND cf.is_active AND cf.show_in_dashboard
+  ) cfd ON true
+`;
+
+/** Row reads (and only those) carry the aggregated custom values. */
+const ROW_FROM_SQL = Prisma.sql`${FROM_SQL} ${CUSTOM_VALUES_JOIN_SQL}`;
 
 function scopeCondition(scope: { fragment: Prisma.Sql; unrestricted: boolean }): Prisma.Sql | null {
   // Doctrine (lib/authz.ts): every read passes through scopeFilter. For staff
@@ -446,7 +473,7 @@ export function createPaymentsAdminService(
     return db.$queryRaw<PaymentRow[]>`
       /* @payadmin:rows */
       SELECT ${ROW_COLUMNS_SQL}
-      ${FROM_SQL}
+      ${ROW_FROM_SQL}
       WHERE ${where}
       ORDER BY r.reported_at DESC, r.id DESC
       ${limitSql}
@@ -520,7 +547,7 @@ export function createPaymentsAdminService(
       return db.$queryRaw<PaymentRow[]>`
         /* @payadmin:selected */
         SELECT ${ROW_COLUMNS_SQL}
-        ${FROM_SQL}
+        ${ROW_FROM_SQL}
         WHERE ${Prisma.join(conditions, " AND ")}
         ORDER BY r.reported_at DESC, r.id DESC
       `;
@@ -529,9 +556,10 @@ export function createPaymentsAdminService(
 }
 
 // -----------------------------------------------------------------------------
-// Export matrix — screen, CSV and XLSX share this one definition (D51)
+// Export matrix — screen, CSV and XLSX share this one definition (D51/D57)
 // -----------------------------------------------------------------------------
 
+/** The 16 fixed §8.5 columns; the dynamic ones are appended (D57). */
 export const PAYMENTS_HEADERS = [
   "Semana",
   "Fecha de pago",
@@ -551,9 +579,23 @@ export const PAYMENTS_HEADERS = [
   "Nota",
 ] as const;
 
+/** One dashboard-visible PAYMENT_REPORT field = one extra column (D57). */
+export interface PaymentsExportField {
+  code: string;
+  label: string;
+}
+
 const DASH = "-";
 
-export function paymentsMatrix(rows: readonly PaymentRow[]): string[][] {
+/** The fixed headers plus one per dashboard field, in the service's order. */
+export function paymentsHeaders(fields: readonly PaymentsExportField[] = []): string[] {
+  return [...PAYMENTS_HEADERS, ...fields.map((field) => field.label)];
+}
+
+export function paymentsMatrix(
+  rows: readonly PaymentRow[],
+  fields: readonly PaymentsExportField[] = [],
+): string[][] {
   return rows.map((row) => [
     row.periodKey,
     dateLabel(row.paidAt),
@@ -571,6 +613,10 @@ export function paymentsMatrix(rows: readonly PaymentRow[]): string[][] {
     row.reviewedByName ?? DASH,
     row.reviewedAt === null ? DASH : dateLabel(row.reviewedAt),
     row.reviewNote ?? DASH,
+    ...fields.map((field) => {
+      const text = formatCustomValue(row.custom?.[field.code]);
+      return text === "" ? DASH : text;
+    }),
   ]);
 }
 

@@ -4,6 +4,7 @@ import { SessionShell } from "@/components/session-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { requireStaffSession } from "@/lib/auth/require";
 import { authorization } from "@/lib/authz";
+import { formatCustomValue } from "@/lib/custom-fields";
 import { createDashboardService } from "@/lib/dashboard";
 import { prisma } from "@/lib/db";
 import {
@@ -15,6 +16,7 @@ import {
   PAYMENTS_PAGE_SIZE_DEFAULT,
   PAYMENTS_PAGE_SIZE_MAX,
   type PaymentsAdminFilters,
+  type PaymentsExportField,
   type SearchParamsLike,
 } from "@/lib/payments-admin";
 import { createReportsService, dateLabel } from "@/lib/reports";
@@ -64,6 +66,13 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
     filters.subtreeOf ? dashboard.userOption(session, filters.subtreeOf) : Promise.resolve(null),
   ]);
 
+  // One dashboard-visible field = one extra column of the table AND of the
+  // export (D57): both read the same field list, so they cannot drift apart.
+  const exportFields: PaymentsExportField[] = customFields.map((field) => ({
+    code: field.code,
+    label: field.label,
+  }));
+
   const rows: PaymentsTableRow[] = page.items.map((row) => ({
     id: row.reportId,
     periodKey: row.periodKey,
@@ -83,6 +92,10 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
     reviewedByName: row.reviewedByName,
     reviewedAtLabel: row.reviewedAt === null ? null : dateLabel(row.reviewedAt),
     reviewNote: row.reviewNote,
+    customCells: exportFields.map((field) => {
+      const text = formatCustomValue(row.custom?.[field.code]);
+      return text === "" ? "—" : text;
+    }),
   }));
 
   const query = filterQuery(filters);
@@ -365,6 +378,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
           <PaymentsTable
             rows={rows}
             cycles={cycles.map((cycle) => ({ id: cycle.id, periodKey: cycle.periodKey }))}
+            customFields={exportFields}
           />
         )}
 

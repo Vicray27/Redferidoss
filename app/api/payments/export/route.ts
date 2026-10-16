@@ -3,8 +3,9 @@
 //
 // Two doors, one matrix: the full filtered set (`exportRows`, hard capped at
 // PAYMENTS_EXPORT_MAX_ROWS) or the checkbox selection (`selectedRows`,
-// addressed by id). Both render `paymentsMatrix` — the same 16 columns the
-// screen shows — so the file and the table cannot disagree (D51).
+// addressed by id). Both render `paymentsMatrix` — the same fixed 16 columns
+// plus one per dashboard-visible custom field (D57) that the screen shows — so
+// the file and the table cannot disagree (D51).
 //
 // When `ids` is present the filters are IGNORED on purpose: exporting the
 // selection must export exactly the selection. An `ids` that parses to nothing
@@ -24,8 +25,9 @@ import {
   createPaymentsAdminService,
   parsePaymentsFilters,
   paymentsFileBase,
+  paymentsHeaders,
   paymentsMatrix,
-  PAYMENTS_HEADERS,
+  type PaymentsExportField,
 } from "@/lib/payments-admin";
 import { sheetCsv } from "@/lib/reports";
 
@@ -42,6 +44,7 @@ const querySchema = z.object({
 
 /** Screen and files share the matrix; these widths only shape the workbook. */
 const PAYMENTS_COLUMN_WIDTHS = [12, 12, 12, 24, 12, 6, 20, 12, 8, 14, 20, 11, 11, 18, 12, 28];
+const CUSTOM_COLUMN_WIDTH = 18;
 
 export async function GET(request: Request): Promise<Response> {
   return withApi(async () => {
@@ -51,16 +54,32 @@ export async function GET(request: Request): Promise<Response> {
     const admin = createPaymentsAdminService(prisma, authorization);
     const dashboard = createDashboardService(prisma, authorization);
 
-    const rows =
-      query.ids !== undefined
-        ? await admin.selectedRows(
-            session,
-            query.ids
-              .split(",")
-              .map((value) => value.trim())
-              .filter((value) => value !== ""),
-          )
-        : await exportFiltered(admin, dashboard, session, request);
+    // The dashboard fields define the extra columns of BOTH doors (D57), so
+    // both files carry the same header as the table. Read once per request.
+    const readFields = async (): Promise<PaymentsExportField[]> =>
+      (await dashboard.listDashboardCustomFields(session)).map((field) => ({
+        code: field.code,
+        label: field.label,
+      }));
+
+    let rows;
+    let fields: PaymentsExportField[];
+    if (query.ids !== undefined) {
+      // The selection door validates the ids FIRST (a selection that parses to
+      // nothing is a 400 before any statement — D51); only then are the column
+      // definitions read, because the export still needs its header.
+      rows = await admin.selectedRows(
+        session,
+        query.ids
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value !== ""),
+      );
+      fields = await readFields();
+    } else {
+      fields = await readFields();
+      rows = await exportFiltered(admin, session, request, fields);
+    }
 
     const filename = `${paymentsFileBase()}.${query.format}`;
     // Exports carry names, references and review notes: keep them out of caches.
@@ -69,22 +88,28 @@ export async function GET(request: Request): Promise<Response> {
       "Cache-Control": "private, no-store",
     };
 
+    const sheetHeaders = paymentsHeaders(fields);
+    const sheetRows = paymentsMatrix(rows, fields);
+
     if (query.format === "csv") {
       const bytes = new TextEncoder().encode(
-        sheetCsv({ headers: PAYMENTS_HEADERS, rows: paymentsMatrix(rows) }),
+        sheetCsv({ headers: sheetHeaders, rows: sheetRows }),
       );
       return new Response(bytes, { status: 200, headers: { ...headers, "Content-Type": CSV_MIME } });
     }
 
     const buffer = await writeXlsxFile(
       [
-        PAYMENTS_HEADERS.map((header) => ({ value: header, fontWeight: "bold" as const })),
-        ...paymentsMatrix(rows),
+        sheetHeaders.map((header) => ({ value: header, fontWeight: "bold" as const })),
+        ...sheetRows,
       ],
       {
         sheet: "Pagos",
         orientation: "landscape",
-        columns: PAYMENTS_COLUMN_WIDTHS.map((width) => ({ width })),
+        columns: [
+          ...PAYMENTS_COLUMN_WIDTHS.map((width) => ({ width })),
+          ...fields.map(() => ({ width: CUSTOM_COLUMN_WIDTH })),
+        ],
       },
     ).toBuffer();
 
@@ -97,13 +122,12 @@ export async function GET(request: Request): Promise<Response> {
 
 async function exportFiltered(
   admin: ReturnType<typeof createPaymentsAdminService>,
-  dashboard: ReturnType<typeof createDashboardService>,
   session: Awaited<ReturnType<typeof requireApiSession>>,
   request: Request,
+  fields: readonly PaymentsExportField[],
 ) {
-  const customFields = await dashboard.listDashboardCustomFields(session);
   const filters = parsePaymentsFilters(new URL(request.url).searchParams, {
-    customFieldCodes: customFields.map((field) => field.code),
+    customFieldCodes: fields.map((field) => field.code),
   });
   return admin.exportRows(session, filters);
 }

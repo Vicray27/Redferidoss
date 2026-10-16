@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { bulkReviewPaymentsAction, reassignPaymentsAction } from "@/lib/payments-actions";
+import type { PaymentsExportField } from "@/lib/payments-admin";
 import { cn } from "@/lib/utils";
 
 export interface PaymentsTableRow {
@@ -38,6 +39,8 @@ export interface PaymentsTableRow {
   reviewedByName: string | null;
   reviewedAtLabel: string | null;
   reviewNote: string | null;
+  /** Already formatted values, one per dashboard custom field, same order. */
+  customCells: string[];
 }
 
 export interface CycleChoice {
@@ -50,9 +53,12 @@ const DASH = "—";
 export function PaymentsTable({
   rows,
   cycles,
+  customFields,
 }: {
   rows: PaymentsTableRow[];
   cycles: CycleChoice[];
+  /** Dashboard-visible fields: header per extra column (D57). */
+  customFields: PaymentsExportField[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -231,6 +237,11 @@ export function PaymentsTable({
               <th className="px-3 py-3 font-medium">Estado</th>
               <th className="px-3 py-3 font-medium">Comprobante</th>
               <th className="px-3 py-3 font-medium">Revisión</th>
+              {customFields.map((field) => (
+                <th key={field.code} className="px-3 py-3 font-medium">
+                  {field.label}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -292,6 +303,11 @@ export function PaymentsTable({
                     </span>
                   ) : null}
                 </td>
+                {row.customCells.map((cell, index) => (
+                  <td key={customFields[index]?.code ?? index} className="px-3 py-3">
+                    {cell}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
