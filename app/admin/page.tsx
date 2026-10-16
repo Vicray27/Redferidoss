@@ -52,7 +52,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
       title="Panel de administración"
       description="Todos los aportes de la red: métricas de la semana, gráficas y accesos a la tabla maestra y al cumplimiento. Solo staff."
     >
-      <nav className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <nav className="grid gap-4 sm:grid-cols-3 lg:grid-cols-4">
         <NavCard
           href="/admin/pagos"
           title="Pagos"
@@ -72,6 +72,11 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
           href="/admin/reportes"
           title="Reportes"
           description="Planilla consolidada con impresión y exportación."
+        />
+        <NavCard
+          href="/admin/metodos-pago"
+          title="Métodos de pago"
+          description="Catálogo de métodos: etiquetas, instrucciones, requisitos y orden."
         />
         <NavCard
           href="/admin/configuracion"
