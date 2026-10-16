@@ -39,9 +39,10 @@ services:
       start_period: 20s
 
   # PR2 decision (D1, see docs/decisiones.md): stock postgres:16 ships the
-  # contrib modules 0001_init needs (ltree, pgcrypto, citext). pg_cron is NOT
-  # in the stock image; the pg_cron-capable image choice is deferred to F7
-  # (jobs) — design fallback is node-cron behind POST /api/cron/{job}.
+  # contrib modules 0001_init needs (ltree, pgcrypto, citext). F7 resolved the
+  # deferred pg_cron question (D62): the stock image stays — the cadence runs
+  # in the app process (instrumentation.ts + jobs/scheduler.ts), and
+  # POST /api/cron/{job} remains as a manual/external trigger.
   postgres:
     image: postgres:16
     restart: unless-stopped

@@ -1121,3 +1121,35 @@ resuelve hacia lo más configurable (spec §18.7).
   `fn_user_move` concurrente la auto-reporta la re-verificación y converge en
   la corrida siguiente; y la función de rebuild queda disponible para un
   "reparar" manual futuro sin duplicar SQL en la aplicación.
+
+### D62 - Scheduler in-process: tick alineado, pg_cron descartado y tolerancia sin pg_cron (F7)
+- Contexto: §9 pide jobs programados y D1 dejó abierta la elección entre
+  pg_cron y un fallback node-cron tras `POST /api/cron/{job}`. En F7 los
+  cuerpos quedaron implementados; faltaba la cadencia.
+- Decisión: (1) la cadencia vive en el proceso de la app
+  (`instrumentation.ts` → `jobs/scheduler.ts`), no en pg_cron ni en un
+  contenedor extra: el deploy es una sola instancia, la cadencia viaja con el
+  código que la ejecuta, y pg_cron obligaría a cambiar la imagen stock de
+  postgres (D1) acoplándola al workflow de migraciones. La ruta autenticada
+  queda como disparador manual/externo (operador, cron del host, pinger).
+  (2) El scheduler no es un lenguaje cron: despierta en el segundo 0 de cada
+  minuto (el drift se corrige en cada vuelta) y pregunta a
+  `computeDueJobs(now, timezone)` qué jobs del registry caen en ESE minuto
+  local; `timing` es metadata del registry (`hourly`, `daily`, `weekly`),
+  siempre en `general.timezone` y releída en cada tick, así un cambio de
+  setting aplica sin redeploy. (3) El orden del registry es load-bearing:
+  ensure → obligations → close corren en ese orden dentro del mismo tick.
+  (4) Un tick nunca se solapa con el siguiente y un minuto se evalúa una sola
+  vez (clave de minuto), incluso si el timer despierta tarde. (5) Aislamiento
+  de fallos: un job que falla no cancela los demás del tick; el próximo slot
+  de ESE job es su retry — los cuerpos son idempotentes (D41/D59). (6) Un
+  solo scheduler por proceso: flag en `globalThis` en instrumentation, más
+  guardas (NODE_ENV=production, runtime Node, fuera del build) y kill switch
+  `JOBS_SCHEDULER=off` sin redeploy. (7) Escala horizontal: con N réplicas
+  cada slot corre N veces; aceptado porque los jobs son idempotentes y toman
+  advisory locks (D59), y porque si el proyecto escala, la respuesta es un
+  job-runner dedicado, no N schedulers — se documenta aquí para no
+  descubrirlo en producción.
+- Consecuencias: la cadencia se reconfigura en el registry (`timing`); los
+  tests del scheduler son herméticos (reloj y timers inyectados); y la ruta
+  cron sigue siendo la superficie autenticada para disparos manuales.
