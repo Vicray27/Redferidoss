@@ -37,6 +37,7 @@
 import { randomBytes } from "node:crypto";
 
 import { AppError, ValidationError } from "./errors";
+import { collectCustomValues, isValidEmail, type CustomFieldRow } from "./custom-fields";
 import {
   MAX_DEPTH_SETTING,
   type InvitationsService,
@@ -140,7 +141,8 @@ export interface RegistrationDeps {
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers (exported for tests and for the form in WU3)
+// Pure helpers (exported for tests and for the form in WU3). Custom-field
+// validation lives in lib/custom-fields.ts — one authority per rule (D56).
 // ---------------------------------------------------------------------------
 
 /** Random 8-char handle. Random, not derived: a derived code would be a reversible fingerprint of the email. */
@@ -155,10 +157,6 @@ export function randomPublicCode(
   return code;
 }
 
-export function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
 export const MIN_PASSWORD_LENGTH = 8;
 
 /** Trimmed string or null; "" and whitespace are stored as NULL, not as empty text. */
@@ -166,213 +164,6 @@ export function emptyToNull(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
-}
-
-interface CustomFieldRow {
-  id: string;
-  code: string;
-  label: string;
-  type: string;
-  options: unknown;
-  isRequired: boolean;
-  regex: string | null;
-  minNumeric: string | null;
-  maxNumeric: string | null;
-}
-
-export function customFieldChoices(options: unknown): string[] {
-  if (!Array.isArray(options)) return [];
-  return options
-    .map((entry) => {
-      if (typeof entry === "string") return entry;
-      if (entry && typeof entry === "object" && "value" in entry) {
-        return String((entry as { value: unknown }).value);
-      }
-      return "";
-    })
-    .filter((value) => value !== "");
-}
-
-function isEmptyValue(raw: unknown): boolean {
-  if (raw === undefined || raw === null) return true;
-  if (typeof raw === "string") return raw.trim() === "";
-  if (Array.isArray(raw)) return raw.length === 0;
-  return false;
-}
-
-/**
- * Validate ONE custom value against its stored definition.
- *
- * The form builds its own Zod schema for fast feedback, but that schema lives
- * in the browser's trust domain. This function is the server-side authority:
- * it re-reads the definitions from `custom_fields` inside the transaction and
- * rejects anything that does not fit, no matter what the client sent.
- */
-export function validateCustomValue(
-  field: Pick<
-    CustomFieldRow,
-    "code" | "label" | "type" | "options" | "regex" | "minNumeric" | "maxNumeric"
-  >,
-  raw: unknown,
-): { ok: true; value: unknown } | { ok: false; message: string } {
-  const label = field.label;
-
-  // FILE values are not collectible at registration (uploads arrive with the
-  // payment-proof pipeline); callers skip the field entirely. Reaching this
-  // branch directly is a programming error, but it must not fail silently.
-  if (field.type === "FILE") {
-    return { ok: false, message: `${label}: este campo se completa después del registro.` };
-  }
-
-  switch (field.type) {
-    case "BOOL": {
-      if (typeof raw === "boolean") return { ok: true, value: raw };
-      if (raw === "true") return { ok: true, value: true };
-      if (raw === "false") return { ok: true, value: false };
-      return { ok: false, message: `${label}: debe ser sí o no.` };
-    }
-    case "NUMBER": {
-      const n = Number(String(raw).trim());
-      if (!Number.isFinite(n) || !Number.isInteger(n)) {
-        return { ok: false, message: `${label}: debe ser un número entero.` };
-      }
-      return withinNumericRange(field, n, label);
-    }
-    case "DECIMAL": {
-      const text = String(raw).trim();
-      const n = Number(text);
-      if (!Number.isFinite(n)) {
-        return { ok: false, message: `${label}: debe ser un número.` };
-      }
-      const ranged = withinNumericRange(field, n, label);
-      // Stored as the original string: NUMERIC never round-trips through float.
-      return ranged.ok ? { ok: true, value: text } : ranged;
-    }
-    case "DATE": {
-      const text = String(raw).trim();
-      // Calendar-strict: Date.parse("2026-02-31") silently rolls over, so the
-      // round-trip through toISOString() is the actual check.
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-        return { ok: false, message: `${label}: usa el formato AAAA-MM-DD.` };
-      }
-      const parsed = new Date(`${text}T00:00:00.000Z`);
-      if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) {
-        return { ok: false, message: `${label}: la fecha no existe.` };
-      }
-      return { ok: true, value: text };
-    }
-    case "DATETIME": {
-      const text = String(raw).trim();
-      if (Number.isNaN(Date.parse(text))) {
-        return { ok: false, message: `${label}: fecha y hora inválidas.` };
-      }
-      return { ok: true, value: text };
-    }
-    case "SELECT": {
-      const text = String(raw).trim();
-      const choices = customFieldChoices(field.options);
-      if (choices.length > 0 && !choices.includes(text)) {
-        return { ok: false, message: `${label}: elige una opción válida.` };
-      }
-      return { ok: true, value: text };
-    }
-    case "MULTISELECT": {
-      const values = Array.isArray(raw) ? raw.map((v) => String(v).trim()) : [String(raw).trim()];
-      const choices = customFieldChoices(field.options);
-      if (choices.length > 0 && values.some((v) => !choices.includes(v))) {
-        return { ok: false, message: `${label}: elige solo opciones válidas.` };
-      }
-      return { ok: true, value: values };
-    }
-    case "URL": {
-      const text = String(raw).trim();
-      try {
-        const url = new URL(text);
-        if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("scheme");
-      } catch {
-        return { ok: false, message: `${label}: debe ser un enlace válido.` };
-      }
-      return { ok: true, value: text };
-    }
-    case "EMAIL": {
-      const text = String(raw).trim();
-      if (!isValidEmail(text)) return { ok: false, message: `${label}: correo inválido.` };
-      return { ok: true, value: text };
-    }
-    case "PHONE": {
-      const text = String(raw).trim();
-      if (!/^[+()0-9][0-9\s().-]{4,24}$/.test(text)) {
-        return { ok: false, message: `${label}: teléfono inválido.` };
-      }
-      return { ok: true, value: text };
-    }
-    default: {
-      // TEXT / TEXTAREA / anything unknown: a string, optionally capped, with
-      // the admin-defined pattern when there is one.
-      const text = String(raw).trim();
-      const cap = field.type === "TEXTAREA" ? 5000 : 500;
-      if (text.length > cap) return { ok: false, message: `${label}: es demasiado largo.` };
-      if (field.regex) {
-        try {
-          if (!new RegExp(field.regex).test(text)) {
-            return { ok: false, message: `${label}: no cumple el formato esperado.` };
-          }
-        } catch {
-          // An invalid pattern is an admin error; it must not block users.
-        }
-      }
-      return { ok: true, value: text };
-    }
-  }
-}
-
-function withinNumericRange(
-  field: { minNumeric: string | null; maxNumeric: string | null },
-  n: number,
-  label: string,
-): { ok: true; value: number } | { ok: false; message: string } {
-  if (field.minNumeric !== null && n < Number(field.minNumeric)) {
-    return { ok: false, message: `${label}: el valor es demasiado bajo.` };
-  }
-  if (field.maxNumeric !== null && n > Number(field.maxNumeric)) {
-    return { ok: false, message: `${label}: el valor es demasiado alto.` };
-  }
-  return { ok: true, value: n };
-}
-
-export interface CollectedCustomValues {
-  values: Array<{ field: CustomFieldRow; value: unknown }>;
-  /** Zod-style field errors, ready for fieldErrorsFrom() / §10 details. */
-  errors: Record<string, string[]>;
-}
-
-/** Validate the whole submission; required fields first, skip-not-error for FILE. */
-export function collectCustomValues(
-  fields: CustomFieldRow[],
-  raw: Record<string, unknown>,
-): CollectedCustomValues {
-  const values: CollectedCustomValues["values"] = [];
-  const errors: CollectedCustomValues["errors"] = {};
-
-  for (const field of fields) {
-    // FILE values cannot be collected by a plain form post; the field is not
-    // rendered at registration and therefore cannot be required there either.
-    if (field.type === "FILE") continue;
-
-    const input = raw[field.code];
-    if (isEmptyValue(input)) {
-      if (field.isRequired) errors[field.code] = ["Este campo es obligatorio."];
-      continue;
-    }
-    const result = validateCustomValue(field, input);
-    if (result.ok) {
-      values.push({ field, value: result.value });
-    } else {
-      errors[field.code] = [result.message];
-    }
-  }
-
-  return { values, errors };
 }
 
 /** Prisma surfaces the Postgres unique violation as 23505 inside meta.code. */

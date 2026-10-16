@@ -27,12 +27,10 @@ import {
   REGISTRATION_CONFLICT_MESSAGE,
   REQUIRE_EMAIL_VERIFICATION_SETTING,
   RegistrationConflictError,
-  collectCustomValues,
   emptyToNull,
   isUniqueViolation,
   randomPublicCode,
   registerUser,
-  validateCustomValue,
   type RegistrationDeps,
   type RegistrationTx,
 } from "../lib/registration";
@@ -720,53 +718,11 @@ describe("randomPublicCode", () => {
   });
 });
 
-describe("validateCustomValue / collectCustomValues", () => {
-  const base = { code: "x", label: "Campo", options: null, regex: null, minNumeric: null, maxNumeric: null };
+// The validateCustomValue / collectCustomValues suites moved to
+// tests/custom-fields.test.ts together with the rules themselves (D56).
 
-  it("accepts booleans in their JSON and form representations", () => {
-    expect(validateCustomValue({ ...base, type: "BOOL" }, true)).toEqual({ ok: true, value: true });
-    expect(validateCustomValue({ ...base, type: "BOOL" }, "false")).toEqual({ ok: true, value: false });
-    expect(validateCustomValue({ ...base, type: "BOOL" }, "quizá").ok).toBe(false);
-  });
-
-  it("enforces SELECT options and MULTISELECT membership", () => {
-    const options = ["Norte", "Sur"];
-    expect(validateCustomValue({ ...base, type: "SELECT", options }, "Norte")).toEqual({
-      ok: true,
-      value: "Norte",
-    });
-    expect(validateCustomValue({ ...base, type: "SELECT", options }, "Este").ok).toBe(false);
-    expect(validateCustomValue({ ...base, type: "MULTISELECT", options }, ["Norte", "Sur"])).toEqual({
-      ok: true,
-      value: ["Norte", "Sur"],
-    });
-    expect(validateCustomValue({ ...base, type: "MULTISELECT", options }, ["Norte", "Este"]).ok).toBe(false);
-  });
-
-  it("rejects impossible dates and out-of-range numbers", () => {
-    expect(validateCustomValue({ ...base, type: "DATE" }, "2026-02-31").ok).toBe(false);
-    expect(validateCustomValue({ ...base, type: "DATE" }, "2026-02-28")).toEqual({
-      ok: true,
-      value: "2026-02-28",
-    });
-    expect(
-      validateCustomValue({ ...base, type: "NUMBER", minNumeric: "1", maxNumeric: "5" }, 9).ok,
-    ).toBe(false);
-    expect(
-      validateCustomValue({ ...base, type: "NUMBER", minNumeric: "1", maxNumeric: "5" }, 3),
-    ).toEqual({ ok: true, value: 3 });
-  });
-
-  it("skips FILE fields instead of half-validating them", () => {
-    const collected = collectCustomValues(
-      [{ id: "f1", code: "adjunto", label: "Adjunto", type: "FILE", options: null, isRequired: true, regex: null, minNumeric: null, maxNumeric: null }],
-      {},
-    );
-    expect(collected.errors).toEqual({});
-    expect(collected.values).toEqual([]);
-  });
-
-  it("emptyToNull maps blank strings to NULL, keeps real ones", () => {
+describe("emptyToNull", () => {
+  it("maps blank strings to NULL and keeps real ones", () => {
     expect(emptyToNull("  ")).toBeNull();
     expect(emptyToNull(null)).toBeNull();
     expect(emptyToNull(" Asunción ")).toBe("Asunción");

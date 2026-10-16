@@ -3,7 +3,7 @@
 // custom-field rules (components/dynamic-form/build-zod-schema.ts).
 //
 // These assertions document the CONTRACT the mirror promises: same checks,
-// same messages as lib/registration.ts `validateCustomValue`. Where the server
+// same messages as lib/custom-fields.ts `validateCustomValue`. Where the server
 // and the mirror disagree, the server wins at submit time — but a disagreement
 // found here is a UX bug worth fixing, not a security hole.
 // =============================================================================

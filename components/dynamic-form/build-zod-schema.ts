@@ -1,6 +1,6 @@
 // =============================================================================
 // components/dynamic-form/build-zod-schema.ts — the CLIENT-side mirror of the
-// custom-field rules that lib/registration.ts enforces on the server.
+// custom-field rules that lib/custom-fields.ts enforces on the server.
 //
 // WHY THE RULES EXIST TWICE
 // -------------------------
@@ -21,7 +21,7 @@
 // (`buildZodSchema`) for findability.
 //
 // FILE FIELDS ARE NOT HERE ON PURPOSE: uploads arrive with the payment-proof
-// pipeline (§5.6), and registration skips them (lib/registration.ts).
+// pipeline (§5.6), and lib/custom-fields.ts skips them.
 // =============================================================================
 
 import type { RegistrationField } from "@/lib/invitations";
@@ -37,7 +37,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[+()0-9][0-9\s().-]{4,24}$/;
 
-/** Mirror of lib/registration.ts `customFieldChoices` (options jsonb). */
+/** Mirror of lib/custom-fields.ts `customFieldChoices` (options jsonb). */
 export function choicesOf(options: unknown): string[] {
   if (!Array.isArray(options)) return [];
   const out: string[] = [];
