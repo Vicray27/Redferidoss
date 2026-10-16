@@ -931,3 +931,39 @@ resuelve hacia lo más configurable (spec §18.7).
   un campo desactivado desaparece de los formularios pero conserva sus valores;
   la unicidad es best-effort documentado en vez de una garantía de base; y la
   pantalla no puede escribir sin pasar por el servicio auditado.
+
+### D57 - Campos personalizados en el aporte semanal (F6): transacción única, reenvío tras rechazo y valores en la revisión
+- Contexto: conectar el motor D56 al formulario de aportes abre tres riesgos.
+  Primero, el reporte y sus `custom_field_values` son UN solo dato: insertar el
+  reporte y fallar después (o al revés) dejaría un envío sin sus datos o datos
+  huérfanos. Segundo, `is_unique` es una verificación en aplicación (D56): si un
+  rechazo se llevara por delante la historia, bloquear el MISMO valor en el
+  reenvío convertiría la corrección en una prisión. Tercero, la revisión y la
+  exportación deben leer valores etiquetados sin conocer cada campo.
+- Decisión: `createReport` escribe el reporte y sus valores en UNA transacción
+  interactiva (`PaymentsDb.$transaction`, con el tx estrecho `PaymentsTx` como
+  superficie del callback — mismo patrón que `RegistrationTx`; Prisma lo
+  satisface porque su cliente de transacción no expone `$transaction`). Las
+  definiciones ACTIVAS de PAYMENT_REPORT se releen DENTRO de la transacción
+  (marcador `@pay:custom-fields`): el cliente jamás dicta las reglas ni conoce
+  un estado viejo de la página. El orden dentro de la transacción es: leer
+  definiciones → `collectCustomValues` (ValidationError con `details` por
+  campo) → INSERT del reporte → `assertCustomValuesUnique` con el id YA
+  asignado → inserts de valores (`@pay:custom-value`); un choque único o un
+  valor inválido revoca TODO el envío, nunca un reporte a medias. El chequeo de
+  unicidad excluye los valores cuyo reporte quedó REJECTED (`NOT EXISTS` sobre
+  `payment_reports.status`): un reporte rechazado es historia, y volver a
+  enviar el mismo dato —el rechazo pudo ser por otro motivo— debe ser posible
+  mientras la semana siga abierta (D43). El guard va por `field_id`, así que
+  para campos de USER no puede coincidir jamás con una fila de reporte. El
+  formulario de la semana prellena los defaults (D56), envía `custom` y pinta
+  los `fieldErrors` que el servidor devuelve por campo; la cola de revisión
+  agrega `label: valor` en la MISMA consulta con un `jsonb_agg` lateral
+  ordenado por `sort_order, code`, y el formato de lectura vive en
+  `formatCustomValue` (bool → Sí/No, listas → separadas por coma). Los campos
+  FILE siguen sin colectarse (D25).
+- Consecuencias: un envío con datos personalizados es atómico —o queda entero o
+  no queda—; rechazar y reenviar el mismo valor funciona y la persona ve por
+  campo exactamente qué corregir; la revisión muestra los datos del aporte sin
+  una segunda consulta ni conocer los campos; y agregar tipos de campo nuevos
+  al formulario de aportes no toca `lib/payments.ts`, solo el motor compartido.

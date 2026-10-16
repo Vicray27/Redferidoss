@@ -34,15 +34,30 @@
 import { Prisma } from "@prisma/client";
 
 import { ForbiddenError, type SessionActor } from "./authz";
+import {
+  assertCustomValuesUnique,
+  collectCustomValues,
+  type CustomFieldRow,
+} from "./custom-fields";
 import { MS_PER_DAY } from "./cycles";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { compareAmounts, formatAmount, parseAmount } from "./money";
 import type { SettingsReader } from "./settings";
 
-/** Prisma-compatible raw database surface (a fake implements it in tests). */
-export interface PaymentsDb {
+/** The narrower surface a transaction callback receives (D57). */
+export interface PaymentsTx {
   $queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T>;
   $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<number>;
+}
+
+/** Prisma-compatible raw database surface (a fake implements it in tests). */
+export interface PaymentsDb extends PaymentsTx {
+  /**
+   * Interactive transaction. `createReport` commits the report row and its
+   * `custom_field_values` as one unit: a unique clash or a bad value rolls the
+   * report back instead of leaving a half-written submission (D57).
+   */
+  $transaction<T>(fn: (tx: PaymentsTx) => Promise<T>): Promise<T>;
 }
 
 /** Settings subset the service depends on — injectable in tests. */
@@ -70,6 +85,8 @@ export interface CreateReportInput {
   paidAt: Date | string;
   note?: string | null;
   proofKey?: string | null;
+  /** Values keyed by custom field `code` (PAYMENT_REPORT fields, §17/F6). */
+  custom?: Record<string, unknown> | null;
 }
 
 export interface CreatedReport {
@@ -156,6 +173,8 @@ export interface ReviewQueueRow {
   publicCode: string;
   cycleId: string;
   periodKey: string;
+  /** PAYMENT_REPORT custom values of the submission, label + raw jsonb. */
+  customValues: Array<{ label: string; value: unknown }>;
 }
 
 /** A direct invitee and the fact of their offering inside a cycle (D39). */
@@ -453,27 +472,61 @@ export function createPaymentsService(
       const status: ReportStatus = autoApprove ? "APPROVED" : "PENDING";
       const methodKind = METHOD_ENUM_CODES.includes(method.code as (typeof METHOD_ENUM_CODES)[number]) ? method.code : "OTHER";
 
-      let inserted: Array<{ id: string; reported_at: Date }>;
+      // --- write phase: report + custom values in ONE transaction (D57) -------
+      // The PAYMENT_REPORT definitions are re-read INSIDE the transaction (the
+      // client is never trusted with the rules), the collected values are
+      // validated against them, and the unique check runs after the report row
+      // exists — so a clash or an invalid value rolls the whole report back
+      // instead of leaving a submission without its data.
+      let report: { id: string; reported_at: Date };
       try {
-        inserted = await db.$queryRaw<Array<{ id: string; reported_at: Date }>>`
-          /* @pay:insert-report */
-          INSERT INTO payment_reports
-            (user_id, cycle_id, amount, currency, method, method_id, reference, paid_at, note, proof_key, status, snapshot_depth, snapshot_path)
-          VALUES
-            (${actor.id}::uuid, ${cycle.id}::uuid, ${formatAmount(amountCents)}::numeric(14,2), ${currency}, ${methodKind}::payment_method,
-             ${method.id}::uuid, ${reference}, ${paidAt}, ${note}, ${proofKey}, ${status}::report_status, ${author.depth}, ${author.path}::ltree)
-          RETURNING id, reported_at
-        `;
+        report = await db.$transaction(async (tx) => {
+          const customFields = await tx.$queryRaw<CustomFieldRow[]>`
+            /* @pay:custom-fields */
+            SELECT id, code, label, type, options,
+                   is_required AS "isRequired", is_unique AS "isUnique",
+                   regex, min_numeric::text AS "minNumeric", max_numeric::text AS "maxNumeric"
+            FROM custom_fields
+            WHERE entity = 'PAYMENT_REPORT' AND is_active
+            ORDER BY sort_order, code
+          `;
+          const collected = collectCustomValues(customFields, input.custom ?? {});
+          if (Object.keys(collected.errors).length > 0) {
+            throw new ValidationError("Revisa los campos del formulario.", collected.errors);
+          }
+
+          const inserted = await tx.$queryRaw<Array<{ id: string; reported_at: Date }>>`
+            /* @pay:insert-report */
+            INSERT INTO payment_reports
+              (user_id, cycle_id, amount, currency, method, method_id, reference, paid_at, note, proof_key, status, snapshot_depth, snapshot_path)
+            VALUES
+              (${actor.id}::uuid, ${cycle.id}::uuid, ${formatAmount(amountCents)}::numeric(14,2), ${currency}, ${methodKind}::payment_method,
+               ${method.id}::uuid, ${reference}, ${paidAt}, ${note}, ${proofKey}, ${status}::report_status, ${author.depth}, ${author.path}::ltree)
+            RETURNING id, reported_at
+          `;
+          const row = inserted[0];
+          if (!row) {
+            // INSERT ... RETURNING always returns a row; a missing one is a bug.
+            throw new Error("payment_reports INSERT ... RETURNING returned no row");
+          }
+
+          // The report id is the entity_id of every value: the values belong to
+          // the SUBMISSION, so a rejected report keeps its history.
+          await assertCustomValuesUnique(tx, collected.values, row.id);
+          for (const entry of collected.values) {
+            await tx.$executeRaw`
+              /* @pay:custom-value */
+              INSERT INTO custom_field_values (field_id, entity_id, value)
+              VALUES (${entry.field.id}::uuid, ${row.id}::uuid, ${JSON.stringify(entry.value)}::jsonb)
+            `;
+          }
+          return row;
+        });
       } catch (error) {
         if (isUniqueViolation(error)) {
           throw new ConflictError("Ya registraste un aporte para esta semana.", "REPORT_ALREADY_EXISTS");
         }
         throw error;
-      }
-      const report = inserted[0];
-      if (!report) {
-        // INSERT ... RETURNING always returns a row; a missing one is a bug.
-        throw new Error("payment_reports INSERT ... RETURNING returned no row");
       }
 
       // Auto-approval (payments.auto_approve) fulfils the obligation at once,
@@ -631,11 +684,21 @@ export function createPaymentsService(
                COALESCE(pm.label, r.method::text) AS method,
                r.paid_at AS "paidAt", r.reported_at AS "reportedAt", r.note, r.proof_key AS "proofKey",
                r.reference, r.user_id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
-               r.cycle_id AS "cycleId", c.period_key AS "periodKey"
+               r.cycle_id AS "cycleId", c.period_key AS "periodKey",
+               COALESCE(cv.custom_values, '[]'::jsonb) AS "customValues"
         FROM payment_reports r
         JOIN users u ON u.id = r.user_id
         JOIN payment_cycles c ON c.id = r.cycle_id
         LEFT JOIN payment_methods pm ON pm.id = r.method_id
+        LEFT JOIN LATERAL (
+          SELECT jsonb_agg(
+                   jsonb_build_object('label', cf.label, 'value', cfv.value)
+                   ORDER BY cf.sort_order, cf.code
+                 ) AS custom_values
+          FROM custom_field_values cfv
+          JOIN custom_fields cf ON cf.id = cfv.field_id
+          WHERE cfv.entity_id = r.id
+        ) cv ON true
         WHERE r.status = 'PENDING'
           AND (${listOptions.cycleId ?? null}::uuid IS NULL OR r.cycle_id = ${listOptions.cycleId ?? null}::uuid)
         ORDER BY r.reported_at ASC

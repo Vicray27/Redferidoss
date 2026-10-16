@@ -29,6 +29,8 @@ export interface ReviewRow {
   proofKey: string | null;
   paidAtLabel: string;
   reportedAtLabel: string;
+  /** Already formatted label: value pairs (D56); empty values are dropped. */
+  customValues: Array<{ label: string; value: string }>;
 }
 
 export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
@@ -120,7 +122,18 @@ export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
                   </span>
                 </td>
                 <td className="px-4 py-3">{row.method}</td>
-                <td className="px-4 py-3">{row.reference ?? "—"}</td>
+                <td className="px-4 py-3">
+                  {row.reference ?? "—"}
+                  {row.customValues.length > 0 ? (
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {row.customValues.map((entry) => (
+                        <span key={entry.label} className="block">
+                          {entry.label}: {entry.value}
+                        </span>
+                      ))}
+                    </span>
+                  ) : null}
+                </td>
                 <td className="px-4 py-3">
                   {row.proofKey ? (
                     <a

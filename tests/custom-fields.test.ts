@@ -11,6 +11,7 @@ import {
   UNIQUE_VALUE_MESSAGE,
   assertCustomValuesUnique,
   collectCustomValues,
+  formatCustomValue,
   validateCustomValue,
   type CustomFieldRow,
 } from "../lib/custom-fields";
@@ -153,5 +154,20 @@ describe("assertCustomValuesUnique", () => {
       ),
     ).resolves.toBeUndefined();
     expect(tx.calls).toHaveLength(1);
+  });
+});
+
+describe("formatCustomValue — stored jsonb back to display text", () => {
+  it("renders booleans, lists and scalars the way a person typed them", () => {
+    expect(formatCustomValue(true)).toBe("Sí");
+    expect(formatCustomValue(false)).toBe("No");
+    expect(formatCustomValue(["Norte", "Sur"])).toBe("Norte, Sur");
+    expect(formatCustomValue("Centro")).toBe("Centro");
+    expect(formatCustomValue(10.5)).toBe("10.5");
+  });
+
+  it("renders missing values as an empty string", () => {
+    expect(formatCustomValue(null)).toBe("");
+    expect(formatCustomValue(undefined)).toBe("");
   });
 });

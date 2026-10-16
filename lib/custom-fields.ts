@@ -86,6 +86,18 @@ export function isEmptyValue(raw: unknown): boolean {
 }
 
 /**
+ * Render one STORED value for the read-only surfaces (review queue, panels):
+ * canonical jsonb back to the text a person would have typed. This is display
+ * only — never parse it back into storage.
+ */
+export function formatCustomValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "Sí" : "No";
+  if (Array.isArray(value)) return value.map((entry) => String(entry)).join(", ");
+  return String(value);
+}
+
+/**
  * Validate ONE custom value against its stored definition.
  *
  * The form builds its own mirror for fast feedback, but that mirror lives in
@@ -269,8 +281,13 @@ export const UNIQUE_VALUE_MESSAGE = "Ya existe un registro con este valor.";
  *
  * Compares each unique field's JSON value against `custom_field_values` rows of
  * OTHER entities with the same `field_id`. Call it BEFORE inserting the new
- * values so a clash aborts without partial writes. See the header for why the
- * race is documented rather than closed.
+ * values so a clash aborts without partial writes.
+ *
+ * Values owned by a REJECTED payment report are ignored: a rejected submission
+ * is history, and blocking a member from re-sending the same value (the report
+ * was rejected for another reason) would make the constraint a prison. The
+ * guard is scoped by `field_id`, so for USER fields it can never match a
+ * report row. See the header for why the race is documented rather than closed.
  */
 export async function assertCustomValuesUnique(
   tx: CustomFieldsTx,
@@ -284,11 +301,15 @@ export async function assertCustomValuesUnique(
 
     const rows = await tx.$queryRaw<Array<{ entityId: string }>>`
       /* @cf:unique-check */
-      SELECT entity_id AS "entityId"
-      FROM custom_field_values
-      WHERE field_id = ${field.id}::uuid
-        AND value = ${JSON.stringify(value)}::jsonb
-        AND entity_id <> ${entityId}::uuid
+      SELECT cfv.entity_id AS "entityId"
+      FROM custom_field_values cfv
+      WHERE cfv.field_id = ${field.id}::uuid
+        AND cfv.value = ${JSON.stringify(value)}::jsonb
+        AND cfv.entity_id <> ${entityId}::uuid
+        AND NOT EXISTS (
+          SELECT 1 FROM payment_reports pr
+          WHERE pr.id = cfv.entity_id AND pr.status = 'REJECTED'
+        )
       LIMIT 1
     `;
 

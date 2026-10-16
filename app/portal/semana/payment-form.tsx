@@ -13,6 +13,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { FieldRenderer } from "@/components/dynamic-form/field-renderer";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -23,6 +24,7 @@ import {
   Input,
   Label,
 } from "@/components/ui/form";
+import type { RegistrationField } from "@/lib/invitations";
 import { submitPaymentReportAction } from "@/lib/payments-actions";
 
 export interface PaymentMethodOption {
@@ -35,12 +37,15 @@ export interface PaymentMethodOption {
 
 export function PaymentForm({
   methods,
+  fields,
   currency,
   amountMode,
   expectedAmount,
   editable,
 }: {
   methods: PaymentMethodOption[];
+  /** Active PAYMENT_REPORT custom fields (F6/D56), rendered by the same renderer. */
+  fields: RegistrationField[];
   currency: string | null;
   amountMode: string | null;
   expectedAmount: string | null;
@@ -57,6 +62,19 @@ export function PaymentForm({
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [uploading, setUploading] = useState(false);
+  // The admin-defined defaults PREFILL the form (D56); the server still
+  // validates whatever is submitted, defaults included.
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>(() =>
+    Object.fromEntries(
+      fields
+        .filter(
+          (field) =>
+            field.type !== "FILE" && field.defaultValue !== null && field.defaultValue !== undefined,
+        )
+        .map((field) => [field.code, field.defaultValue]),
+    ),
+  );
+  const [customErrors, setCustomErrors] = useState<Record<string, string>>({});
 
   const selectedMethod = methods.find((method) => method.id === methodId) ?? null;
 
@@ -72,6 +90,7 @@ export function PaymentForm({
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage(null);
+    setCustomErrors({});
 
     if (amount.trim() === "" || Number(amount) <= 0) {
       setMessage({ kind: "error", text: "Ingresa el monto del aporte." });
@@ -119,10 +138,12 @@ export function PaymentForm({
         paidAt,
         note: note.trim() === "" ? null : note,
         proofKey,
+        custom: fields.length > 0 ? customValues : null,
       });
 
       if (!result.ok) {
         setMessage({ kind: "error", text: result.message ?? "No se pudo enviar el aporte." });
+        setCustomErrors(result.fieldErrors ?? {});
         return;
       }
 
@@ -134,6 +155,19 @@ export function PaymentForm({
       setReference("");
       setNote("");
       setFile(null);
+      // Back to the admin defaults, exactly like a fresh page load.
+      setCustomValues(
+        Object.fromEntries(
+          fields
+            .filter(
+              (field) =>
+                field.type !== "FILE" &&
+                field.defaultValue !== null &&
+                field.defaultValue !== undefined,
+            )
+            .map((field) => [field.code, field.defaultValue]),
+        ),
+      );
       router.refresh();
     });
   };
@@ -250,6 +284,25 @@ export function PaymentForm({
               className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground"
             />
           </div>
+
+          {fields.length > 0 ? (
+            <div className="space-y-4 rounded-md border border-dashed p-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Datos del aporte
+              </p>
+              {fields.map((field) => (
+                <FieldRenderer
+                  key={field.code}
+                  field={field}
+                  value={customValues[field.code]}
+                  error={customErrors[field.code]}
+                  onChange={(next) =>
+                    setCustomValues((current) => ({ ...current, [field.code]: next }))
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
 
           {message ? (
             <p

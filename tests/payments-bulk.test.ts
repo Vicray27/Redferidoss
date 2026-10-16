@@ -75,6 +75,12 @@ class PayFake implements PaymentsDb {
     const handler = this.execHandlers.get(marker);
     return handler ? (handler(values) as number) : 1;
   }
+
+  // Implemented for interface parity (D57); the bulk paths under test never
+  // open the createReport transaction.
+  async $transaction<T>(fn: (tx: PaymentsDb) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
 }
 
 const SETTINGS: PaymentsSettings = {

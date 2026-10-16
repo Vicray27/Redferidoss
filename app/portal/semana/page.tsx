@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth/require";
 import { authorization, toActor } from "@/lib/authz";
 import { MS_PER_DAY, effectiveCycleStatus, isReportable } from "@/lib/cycles";
 import { prisma } from "@/lib/db";
+import type { RegistrationField } from "@/lib/invitations";
 import { createPaymentsService } from "@/lib/payments";
 import { settings } from "@/lib/settings";
 import { createWeeklyReportsService } from "@/lib/weekly-reports";
@@ -65,7 +66,7 @@ export default async function WeekPage() {
 
   const now = new Date();
 
-  const [cycles, methodRows, myPaymentReports, weeklyHistory] = await Promise.all([
+  const [cycles, methodRows, customFieldRows, myPaymentReports, weeklyHistory] = await Promise.all([
     prisma.$queryRaw<CycleRow[]>`
       SELECT id, period_key, starts_at, ends_at, due_at, status
       FROM payment_cycles
@@ -78,6 +79,17 @@ export default async function WeekPage() {
       FROM payment_methods
       WHERE is_active
       ORDER BY sort_order, label
+    `,
+    // The PAYMENT_REPORT fields the offering form renders (D56); the service
+    // re-reads them inside its transaction, so this read is for the UI only.
+    prisma.$queryRaw<RegistrationField[]>`
+      SELECT code, label, type, options,
+             is_required AS "isRequired", regex,
+             min_numeric::text AS "minNumeric", max_numeric::text AS "maxNumeric",
+             sort_order AS "sortOrder", default_value AS "defaultValue"
+      FROM custom_fields
+      WHERE entity = 'PAYMENT_REPORT' AND is_active
+      ORDER BY sort_order, code
     `,
     payments.listMyReports({ id: session.userId, role: session.role }, { limit: 8 }),
     weekly.myReports(actor, { limit: 8 }),
@@ -170,6 +182,7 @@ export default async function WeekPage() {
         <WeekForm defaults={weeklyDefaults} editable={reportable} />
         <PaymentForm
           methods={methods}
+          fields={customFieldRows}
           currency={currency}
           amountMode={amountMode}
           expectedAmount={expectedAmount === null ? null : String(expectedAmount)}

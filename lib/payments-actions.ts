@@ -31,6 +31,8 @@ export interface PaymentActionResult {
   ok: boolean;
   message?: string;
   reportId?: string;
+  /** First message per field from `ValidationError.details`, when present. */
+  fieldErrors?: Record<string, string>;
 }
 
 /** §8.5 bulk actions: counts plus the per-item skips the UI explains (D52). */
@@ -47,7 +49,19 @@ export interface BulkPaymentActionResult {
 
 function toFailure(error: unknown): PaymentActionResult | null {
   if (error instanceof AppError) {
-    return { ok: false, message: error.message };
+    // `details` from ValidationError is the field-keyed map (values may be
+    // string arrays): keep the FIRST message per field, like fieldErrorsFrom().
+    const details = error.details;
+    let fieldErrors: Record<string, string> | undefined;
+    if (details !== null && typeof details === "object" && !Array.isArray(details)) {
+      const entries: Array<[string, string]> = [];
+      for (const [field, value] of Object.entries(details as Record<string, unknown>)) {
+        const message = Array.isArray(value) ? value[0] : value;
+        if (typeof message === "string") entries.push([field, message]);
+      }
+      if (entries.length > 0) fieldErrors = Object.fromEntries(entries);
+    }
+    return { ok: false, message: error.message, ...(fieldErrors ? { fieldErrors } : {}) };
   }
   return null;
 }
@@ -61,6 +75,8 @@ export async function submitPaymentReportAction(input: {
   note?: string | null;
   /** `key` returned by POST /api/uploads (two-step flow, D29/D42). */
   proofKey?: string | null;
+  /** Values keyed by custom field `code` (PAYMENT_REPORT fields, F6). */
+  custom?: Record<string, unknown> | null;
 }): Promise<PaymentActionResult> {
   const session = await getSession();
   if (!session) return { ok: false, message: "Debes iniciar sesión para continuar." };
@@ -78,6 +94,7 @@ export async function submitPaymentReportAction(input: {
         paidAt: input.paidAt,
         note: input.note ?? null,
         proofKey: input.proofKey ?? null,
+        custom: input.custom ?? null,
       },
     );
 

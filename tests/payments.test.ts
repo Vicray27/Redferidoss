@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createAuthorization, type SessionActor } from "../lib/authz";
+import { UNIQUE_VALUE_MESSAGE } from "../lib/custom-fields";
 import {
   createPaymentsService,
   isUniqueViolation,
@@ -54,7 +55,7 @@ class PayFake implements PaymentsDb {
 
   async $queryRaw<T = unknown>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T> {
     const text = strings.join("?");
-    const marker = /\/\* @pay:([\w-]+) \*\//.exec(text)?.[1];
+    const marker = /\/\* @(?:pay|cf):([\w-]+) \*\//.exec(text)?.[1];
     if (!marker) throw new Error(`PayFake: unmarked statement: ${text}`);
     const handler = this.queryHandlers.get(marker);
     if (!handler) throw new Error(`PayFake: no handler for ${marker}`);
@@ -64,11 +65,17 @@ class PayFake implements PaymentsDb {
 
   async $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<number> {
     const text = strings.join("?");
-    const marker = /\/\* @pay:([\w-]+) \*\//.exec(text)?.[1];
+    const marker = /\/\* @(?:pay|cf):([\w-]+) \*\//.exec(text)?.[1];
     if (!marker) throw new Error(`PayFake: unmarked statement: ${text}`);
     this.executions.push({ marker, values });
     const handler = this.execHandlers.get(marker);
     return handler ? (handler(values) as number) : 1;
+  }
+
+  // The service runs its write phase in one interactive transaction (D57);
+  // the fake delegates to itself, so markers keep routing to the handlers.
+  async $transaction<T>(fn: (tx: PaymentsDb) => Promise<T>): Promise<T> {
+    return fn(this);
   }
 }
 
@@ -135,6 +142,7 @@ const QUEUE_ROW = {
   publicCode: "ANA001",
   cycleId: "cycle-1",
   periodKey: "2026-W42",
+  customValues: [] as Array<{ label: string; value: unknown }>,
 };
 
 function buildService(overrides: { settings?: Record<string, unknown>; now?: Date } = {}) {
@@ -154,6 +162,7 @@ function buildService(overrides: { settings?: Record<string, unknown>; now?: Dat
     .on("proof-owner", () => [{ owner_id: ACTOR.id }])
     .on("existing-report", () => [])
     .on("author-snapshot", () => [{ path: "root.abc", depth: 2 }])
+    .on("custom-fields", () => [])
     .on("insert-report", () => [{ id: "report-1", reported_at: NOW }])
     .on("report-for-review", () => [{ id: "report-1", user_id: ACTOR.id, cycle_id: "cycle-1", status: "PENDING" }])
     .on("review-update", () => [{ id: "report-1", user_id: ACTOR.id, cycle_id: "cycle-1" }])
@@ -330,6 +339,83 @@ describe("createReport", () => {
     expect(db.valuesOf("insert-report")).toContain("APPROVED");
     expect(db.execCallsFor("fulfil-obligation")).toHaveLength(1);
     expect(db.execCallsFor("notify-review")).toHaveLength(1);
+  });
+});
+
+describe("createReport — PAYMENT_REPORT custom fields (D57)", () => {
+  const barrio = {
+    id: "field-9",
+    code: "barrio",
+    label: "Barrio",
+    type: "TEXT",
+    options: null,
+    isRequired: false,
+    isUnique: false,
+    regex: null,
+    minNumeric: null,
+    maxNumeric: null,
+  };
+
+  it("validates the submission against the fields re-read inside the transaction and stores the values", async () => {
+    const { db, service } = buildService();
+    db.on("custom-fields", () => [barrio]);
+
+    const result = await service.createReport(ACTOR, baseInput({ custom: { barrio: "Centro" } }));
+
+    expect(result.id).toBe("report-1");
+    // The definitions are read in the same transaction as the insert (D57).
+    expect(db.callsFor("custom-fields")).toHaveLength(1);
+    const stored = db.execCallsFor("custom-value");
+    expect(stored).toHaveLength(1);
+    expect(stored[0].values).toEqual(["field-9", "report-1", JSON.stringify("Centro")]);
+  });
+
+  it("rejects a missing required field before the report row is written", async () => {
+    const { db, service } = buildService();
+    db.on("custom-fields", () => [{ ...barrio, isRequired: true }]);
+
+    await expect(service.createReport(ACTOR, baseInput({ custom: {} }))).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      details: { barrio: ["Este campo es obligatorio."] },
+    });
+    expect(db.callsFor("insert-report")).toHaveLength(0);
+    expect(db.execCallsFor("custom-value")).toHaveLength(0);
+  });
+
+  it("rejects a value outside the field's options", async () => {
+    const { db, service } = buildService();
+    db.on("custom-fields", () => [{ ...barrio, type: "SELECT", options: ["Norte", "Sur"] }]);
+
+    await expect(
+      service.createReport(ACTOR, baseInput({ custom: { barrio: "Este" } })),
+    ).rejects.toMatchObject({ details: { barrio: ["Barrio: elige una opción válida."] } });
+    expect(db.execCallsFor("custom-value")).toHaveLength(0);
+  });
+
+  it("runs the unique check AFTER the report row exists and BEFORE any value row", async () => {
+    const { db, service } = buildService();
+    db.on("custom-fields", () => [{ ...barrio, isUnique: true }]);
+    db.on("unique-check", () => [{ entityId: "other-report" }]);
+
+    await expect(
+      service.createReport(ACTOR, baseInput({ custom: { barrio: "Centro" } })),
+    ).rejects.toMatchObject({ details: { barrio: [UNIQUE_VALUE_MESSAGE] } });
+
+    expect(db.callsFor("insert-report")).toHaveLength(1);
+    expect(db.callsFor("unique-check")[0].values).toEqual(["field-9", JSON.stringify("Centro"), "report-1"]);
+    expect(db.execCallsFor("custom-value")).toHaveLength(0);
+  });
+
+  it("skips FILE fields instead of half-validating them", async () => {
+    const { db, service } = buildService();
+    db.on("custom-fields", () => [
+      { ...barrio, id: "field-file", code: "acta", label: "Acta", type: "FILE", isRequired: true },
+    ]);
+
+    await expect(service.createReport(ACTOR, baseInput({ custom: {} }))).resolves.toMatchObject({
+      id: "report-1",
+    });
+    expect(db.execCallsFor("custom-value")).toHaveLength(0);
   });
 });
 

@@ -1,6 +1,7 @@
 import { SessionShell } from "@/components/session-shell";
 import { requireStaffSession } from "@/lib/auth/require";
 import { authorization } from "@/lib/authz";
+import { formatCustomValue } from "@/lib/custom-fields";
 import { prisma } from "@/lib/db";
 import { createPaymentsService } from "@/lib/payments";
 import { settings } from "@/lib/settings";
@@ -40,6 +41,9 @@ export default async function ReviewPage() {
     proofKey: row.proofKey,
     paidAtLabel: dayLabel(row.paidAt),
     reportedAtLabel: dayLabel(row.reportedAt),
+    customValues: row.customValues
+      .map((entry) => ({ label: entry.label, value: formatCustomValue(entry.value) }))
+      .filter((entry) => entry.value !== ""),
   }));
 
   return (
