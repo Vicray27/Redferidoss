@@ -1,7 +1,7 @@
 import Link from "next/link";
 
-import { Button, buttonVariants } from "@/components/ui/button";
-import { landingPathForRole } from "@/lib/auth/guards";
+import { buttonVariants } from "@/components/ui/button";
+import { isStaffRole, landingPathForRole } from "@/lib/auth/guards";
 import { getSession } from "@/lib/auth/require";
 import { cn } from "@/lib/utils";
 
@@ -27,9 +27,13 @@ export default async function Home() {
         <Link href={landing} className={cn(buttonVariants())}>
           {session ? `Ir a ${landing}` : "Iniciar sesión"}
         </Link>
-        <Button variant="outline" disabled>
-          Panel completo en F5
-        </Button>
+        {/* F5 shipped: the dashboard is real now, so the door is a link that
+            only staff sees — members land in /portal, not here. */}
+        {session && isStaffRole(session.role) ? (
+          <Link href="/admin" className={cn(buttonVariants({ variant: "outline" }))}>
+            Panel de administración
+          </Link>
+        ) : null}
       </div>
     </main>
   );

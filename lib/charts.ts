@@ -2,7 +2,7 @@
 // lib/charts.ts — deterministic geometry for the §8.5 dependency-free charts.
 //
 // The dashboard's five charts are server-rendered SVG: no charting library, no
-// client JavaScript, no canvas. That choice (D51) moves every interesting
+// client JavaScript, no canvas. That choice (D49) moves every interesting
 // number out of a component and into these pure functions, so the shapes the
 // tests pin are the shapes the browser draws.
 //
@@ -191,7 +191,7 @@ export function percentLabel(numerator: number, denominator: number, decimals = 
   return `${((numerator / denominator) * 100).toFixed(decimals)} %`;
 }
 
-/** The five window sizes the §8.5 bar chart offers (D51). */
+/** The five window sizes the §8.5 bar chart offers (D49). */
 export const CHART_WINDOWS = [12, 26, 52] as const;
 export type ChartWindow = (typeof CHART_WINDOWS)[number];
 

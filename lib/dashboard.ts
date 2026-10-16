@@ -22,7 +22,7 @@
 // and crosses as a plain number, which is stated in D50 so nobody starts
 // treating a percentage as an amount.
 //
-// CHART WINDOWS (D49/D51)
+// CHART WINDOWS (D49)
 // -----------------------
 // `weeks` ∈ {12, 26, 52} of PAYMENT CYCLES, not calendar weeks: the cycle is
 // the unit every figure in this app is filed under, and the selected cycle is
@@ -33,6 +33,7 @@
 import { Prisma } from "@prisma/client";
 
 import { ForbiddenError, isStaffActor, type SessionActor } from "./authz";
+import { CHART_WINDOWS } from "./charts";
 import { NotFoundError } from "./errors";
 import { addAmounts, formatAmount, parseAmount } from "./money";
 import type { CycleOption } from "./reports";
@@ -51,8 +52,8 @@ export interface DashboardServiceOptions {
   now?: () => Date;
 }
 
-/** The five chart windows §8.5 offers (D49). */
-export const DASHBOARD_WINDOWS = [12, 26, 52] as const;
+/** The five chart windows §8.5 offers — one definition, in lib/charts (D49). */
+export const DASHBOARD_WINDOWS = CHART_WINDOWS;
 export type DashboardWindow = (typeof DASHBOARD_WINDOWS)[number];
 
 /** The compliance matrix is bounded by this many people (D54). */

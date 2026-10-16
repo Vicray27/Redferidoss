@@ -745,7 +745,7 @@ resuelve hacia lo más configurable (spec §18.7).
   "usuarios nuevos" y "tamaño de la red" admiten varias lecturas (¿promedio de
   qué? ¿del periodo o histórico?), y una lectura implícita distinta en cada
   consulta es la forma más rápida de que dos personas vean cifras distintas.
-- Decisión: todos los KPIs se anclan en la semana seleccionada (`?semana=`,
+- Decisión: todos los KPIs se anclan en la semana seleccionada (`?cycle=`,
   default la semana actual — misma convención que /admin/reportes, D37):
   1. Recaudado = Σ de montos APPROVED de la semana; 2. Nº de reportes = todos
   los reportes de la semana ("cuántos reportaron"); 3. Ticket promedio =
@@ -813,3 +813,29 @@ resuelve hacia lo más configurable (spec §18.7).
   obligación↔reporte queda intacta porque solo se mueve lo que todavía no
   decidió nada. La aprobación posterior en la semana destino cumple la
   obligación de ESA semana por las reglas existentes, sin código nuevo.
+
+### D53 - El panel `/admin` (F5): una sola vista raíz, gráficas servidas y estado en la URL
+- Contexto: §8.5 pide que la Persona #1 vea "siempre y en detalle" toda la red.
+  Las opciones eran repartir el resumen en varias pantallas nuevas o convertir
+  `/admin` en el panel único con puertas; y para las cinco gráficas, interacción
+  de cliente (D49 ya decidió SVG servido) contra un estado de selección que
+  viva en la URL.
+- Decisión: `/admin` ES el dashboard: ocho tarjetas KPI y las cinco gráficas en
+  `components/charts/` (barras por semana, líneas reportes vs obligaciones,
+  barras por nivel, Top 10 contribuyentes y patrocinadores, mapa de calor
+  semanas × niveles) sobre la geometría pura de `lib/charts.ts`. La semana se
+  elige con `?cycle=` y la ventana con `?semanas=` (12/26/52, default 12); ambos
+  valores se validan en el servidor y un valor desconocido cae al default sin
+  romper la página (el servicio re-valida `weeks` contra `DASHBOARD_WINDOWS`).
+  Las gráficas reciben los montos en centavos solo para dibujar; las etiquetas
+  que se imprimen salen de `lib/money.ts`. Una semana inexistente en la URL
+  degrada a la semana vigente con aviso (misma doctrina que /admin/reportes) y
+  "sin semanas" es un estado vacío, nunca un 500. Las cinco puertas (Pagos,
+  Cumplimiento, Revisión, Reportes, Configuración) son tarjetas de navegación
+  del encabezado; la portada del sitio ofrece el enlace a `/admin` únicamente a
+  staff (`isStaffRole`).
+- Consecuencias: el panel es una cara delgada sobre `createDashboardService` —
+  la página no decide semántica de KPIs (§8.5/D50) ni aritmética de dinero, y
+  todo dato nuevo pasa por el servicio con su marcador `@dash:*` y su test. Las
+  gráficas siguen siendo verificables sin DOM porque la geometría vive en
+  `lib/charts.ts` (D49); imprimir la pantalla imprime las gráficas como HTML.
