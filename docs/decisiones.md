@@ -1397,3 +1397,39 @@ resuelve hacia lo más configurable (spec §18.7).
   (tree 100, cycles 100, settings 100, authz 97,72, money 100); 87 tests
   nuevos (879 en total). Si un wrapper gana lógica de negocio, el primer test
   es el que la cubra — y si el número global cae bajo 80, el gate lo detiene.
+
+### D72 - E2E Playwright sobre una base descartable por corrida (F8)
+- Contexto: §16 pide "E2E Playwright de los flujos: invitar → registrar →
+  reportar → aprobar → ver en dashboard filtrado por semana". La estación no
+  tiene Docker, psql ni PostgreSQL local: el único servidor alcanzable es el de
+  desarrollo (192.168.0.105), que ya carga el dataset de `seed:demo` (D70) y
+  jamás debe ser tocado por una corrida de tests.
+- Decisión: (1) Sondeo previo (`e2e-db-probe.cjs`): el rol `referidos` puede
+  `CREATE DATABASE` en ese servidor, las extensiones `citext`/`ltree` están
+  disponibles y el drop de limpieza funciona — la corrida usa una base
+  descartable `referidos_e2e_<stamp>` en el MISMO servidor, jamás la compartida.
+  (2) `playwright.config.ts`: un worker, `webServer` = `pnpm exec next dev -p
+  3100` con `DATABASE_URL` de la base descartable y `AUTH_SECRET` aleatorio de
+  32 bytes por corrida; la URL base del servidor se lee de `.env` (único dato
+  compartido). El `env` del webServer pisa al `.env` porque Next no sobreescribe
+  variables ya presentes en `process.env`. (3) `e2e/global-setup.ts`: limpia una
+  base huérfana de una corrida caída (archivo marcador), crea la base, aplica
+  `prisma migrate deploy` y `pnpm seed:root` con las credenciales de la corrida;
+  si algo falla, dropea lo creado antes de propagar. La conexión admin apunta a
+  la base de MANTENIMIENTO (la de `.env`); el nombre descartable viaja solo en
+  el DDL — la primera corrida falló exactamente por llevar el nombre nuevo en
+  el path de conexión. (4) Marcador `e2e/.e2e-db-url` (gitignored): setup lo
+  escribe ANTES de migrar y el teardown lo lee (puede correr en otro proceso) y
+  dropea con `WITH (FORCE)` para cerrar conexiones del dev server. (5) El
+  journey es UN test con dos contextos de navegador (root y miembro) — sin
+  depender de un logout; aserta que el dinero PENDING no cuenta (0,00 USD) y
+  que el aprobado aparece (10,00 USD) en el dashboard filtrado por la semana
+  actual; los KPIs son vivos (D68), así que no hay carrera contra la MV.
+  (6) `next dev` comparte `.next/`: hay que detener `pnpm dev` antes de
+  `pnpm test:e2e`; los warnings del dev server (caché de webpack, cross-origin)
+  son ruido conocido.
+- Consecuencias: `pnpm test:e2e` verde (journey 21,2 s; 40,8 s totales con
+  migrate + seed + drop); tras la corrida `pg_database LIKE 'referidos_e2e_%'`
+  queda vacío, el marcador no existe y la base compartida no se tocó; el gate
+  unitario no cambió (`vitest` incluye solo `tests/**/*.test.ts`). El costo es
+  ~30 s por corrida (migraciones + seed) a cambio de aislamiento total.

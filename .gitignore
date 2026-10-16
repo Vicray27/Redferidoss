@@ -34,6 +34,8 @@ coverage/
 playwright-report/
 test-results/
 .turbo/
+# e2e marker: throwaway database URL for the current run (D72)
+e2e/.e2e-db-url
 
 # local proof uploads (D42) — runtime data, never source
 /uploads/
