@@ -778,16 +778,20 @@ resuelve hacia lo más configurable (spec §18.7).
   árbol se mueva. Los filtros de campos personalizados (`cf_<code>`) solo se
   aceptan para campos con `show_in_dashboard`. La tabla pagina server-side
   (`page`/`page_size`, default 50, máximo 200) con `ORDER BY reported_at DESC`.
-  La pantalla, el CSV y el XLSX comparten `PAYMENTS_HEADERS + paymentsMatrix`
-  (16 columnas fijas, estado en español, `-` para vacíos; a estas se suma UNA
-  columna por campo de panel desde D57); la exportación completa
+  El CSV y el XLSX comparten `PAYMENTS_HEADERS + paymentsMatrix` (16 columnas
+  fijas, estado en español, `-` para vacíos); la pantalla arma su propia tabla
+  sobre los mismos datos. En ambos lados se suma UNA columna por campo de panel
+  desde D57 — pantalla y exportación leen la misma lista de campos, así que no
+  pueden desincronizarse. La exportación completa
   corta en 10 000 filas con un 400 explicativo en vez de truncar en silencio, y
   la exportación de selección valida y deduplica los ids con el mismo tope.
   La columna Usuario enlaza a la ficha de red (`/portal/network/<id>`, visible
   para staff), porque `/admin/usuarios` todavía no existe (F6).
-- Consecuencias: una sola definición de fila/columna sirve pantalla y archivos;
-  una URL rota degrada a "menos filtros", nunca a un 500 ni a una lectura más
-  amplia; el nivel del reporte es el actual (`u.depth`) y el árbol de
+- Consecuencias: los dos archivos salen de una única definición de
+  fila/columna, y la pantalla —que renderiza a su manera— comparte con ellos la
+  lista de campos dinámicos; una URL rota degrada a "menos filtros", nunca a un
+  500 ni a una lectura más amplia; el nivel del reporte es el actual (`u.depth`)
+  y el árbol de
   filtrado es el histórico (`snapshot_path`) — dos preguntas distintas con la
   columna que corresponde a cada una.
 

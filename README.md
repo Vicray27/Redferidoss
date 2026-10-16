@@ -440,7 +440,7 @@ Al fallar responden el envelope de §10; al responder bien, la exportación es e
 |---|---|
 | `lib/charts.ts` | Geometría pura de las gráficas (barras, línea, mapa de calor): sin React ni DOM, verificable con números (`niceMax`, `heatColor`, `resolveChartWindow`). D49. |
 | `lib/dashboard.ts` | `createDashboardService` (solo staff): `getOverview` (KPIs y series), `getCompliance` (matriz, tope 500), `searchUsers`/`userOption`/catálogos de métodos y campos. Toda la aritmética de dinero en céntimos BigInt. D50/D54. |
-| `lib/payments-admin.ts` | Filtros (`parsePaymentsFilters`), `listPayments`/`exportRows`/`selectedRows` y la matriz de la tabla (cabeceras + celdas) — pantalla, CSV y XLSX comparten esa matriz, con una columna extra por campo de panel (D57). Tope de exportación 10.000 filas. D51/D57. |
+| `lib/payments-admin.ts` | Filtros (`parsePaymentsFilters`), `listPayments`/`exportRows`/`selectedRows` y la matriz de exportación (cabeceras + celdas): CSV y XLSX salen de esa única matriz; la pantalla tiene su propio render y comparte con la exportación la lista de campos dinámicos (una columna extra por campo de panel, D57). Tope de exportación 10.000 filas. D51/D57. |
 | `lib/payments-actions.ts` | Server actions del toolbar (`bulkReviewPaymentsAction`, `reassignPaymentsAction`) sobre `reviewMany`/`reassignReports` de `lib/payments.ts`, con tope de 500 ids por lote. D52. |
 | `components/charts/*` | Los cuatro componentes SVG (barras verticales/horizontales, línea, mapa de calor) que dibujan la geometría de `lib/charts.ts` como componentes de servidor. D49. |
 

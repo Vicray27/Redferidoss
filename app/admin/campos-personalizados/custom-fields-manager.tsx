@@ -310,7 +310,7 @@ export function CustomFieldsManager({ fields }: { fields: CustomFieldItem[] }) {
     {
       entity: "PAYMENT_REPORT",
       title: "Reportes de pago",
-      description: "Campos del formulario semanal, el registro …",
+      description: "Campos del aporte semanal. Los que marques «En el panel/exportaciones» aparecen como columnas en la tabla maestra de pagos y en sus exportaciones.",
     },
   ];
 

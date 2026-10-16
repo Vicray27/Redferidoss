@@ -104,14 +104,14 @@ describe("collectCustomValues", () => {
 
 describe("assertCustomValuesUnique", () => {
   function fakeTx(rows: unknown[] = []) {
-    const calls: Array<{ marker: string; values: unknown[] }> = [];
+    const calls: Array<{ marker: string; text: string; values: unknown[] }> = [];
     return {
       calls,
       $queryRaw: async <T = unknown>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T> => {
         const text = strings.join("?");
         const marker = /\/\* (@[\w:-]+) \*\//.exec(text)?.[1];
         if (!marker) throw new Error(`test tx: statement without marker: ${text}`);
-        calls.push({ marker, values });
+        calls.push({ marker, text, values });
         return rows as T;
       },
     };
@@ -154,6 +154,21 @@ describe("assertCustomValuesUnique", () => {
       ),
     ).resolves.toBeUndefined();
     expect(tx.calls).toHaveLength(1);
+  });
+
+  it("ignores values owned by a REJECTED payment report (exclusion pinned in SQL)", async () => {
+    const tx = fakeTx([]);
+    await expect(
+      assertCustomValuesUnique(
+        tx,
+        [{ field: field({ id: "f9", code: "documento", isUnique: true }), value: "A1" }],
+        "entity-1",
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(tx.calls).toHaveLength(1);
+    expect(tx.calls[0].text).toContain("NOT EXISTS");
+    expect(tx.calls[0].text).toContain("pr.status = 'REJECTED'");
   });
 });
 
