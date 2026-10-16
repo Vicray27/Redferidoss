@@ -7,7 +7,7 @@
 // code projection, the status written, and WHEN the obligation is fulfilled.
 // =============================================================================
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createAuthorization, type SessionActor } from "../lib/authz";
 import { UNIQUE_VALUE_MESSAGE } from "../lib/custom-fields";
@@ -204,6 +204,16 @@ describe("createReport", () => {
     expect(insertValues).toContain("root.abc");
     expect(db.execCallsFor("fulfil-obligation")).toHaveLength(0);
     expect(db.execCallsFor("notify-review")).toHaveLength(0);
+    expect(db.execCallsFor("mv-refresh")).toHaveLength(0);
+  });
+
+  it("refreshes the weekly MV once when auto_approve accepts the report (§14)", async () => {
+    const { db, service } = buildService({ settings: { "payments.auto_approve": true } });
+
+    await service.createReport(ACTOR, baseInput());
+
+    expect(db.execCallsFor("fulfil-obligation")).toHaveLength(1);
+    expect(db.execCallsFor("mv-refresh")).toHaveLength(1);
   });
 
   it("rejects an amount below the MINIMUM", async () => {
@@ -467,6 +477,33 @@ describe("reviewReport", () => {
     const notifyValues = db.execCallsFor("notify-review")[0]?.values ?? [];
     expect(notifyValues).toContain(ACTOR.id);
     expect(notifyValues).toContain("Aporte aprobado");
+    expect(db.execCallsFor("mv-refresh")).toHaveLength(1);
+  });
+
+  it("does not refresh the MV when the submission lands PENDING", async () => {
+    const { db, service } = buildService();
+
+    await service.createReport(ACTOR, baseInput());
+
+    expect(db.execCallsFor("mv-refresh")).toHaveLength(0);
+  });
+
+  it("swallows a failing MV refresh: the approval it followed still stands", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { db, service } = buildService();
+      db.onExec("mv-refresh", () => {
+        throw new Error("refresh failed");
+      });
+
+      await expect(service.reviewReport(REVIEWER, "report-1", "APPROVED", null)).resolves.toMatchObject({
+        status: "APPROVED",
+      });
+      expect(db.execCallsFor("mv-refresh")).toHaveLength(1);
+      expect(warn).toHaveBeenCalledWith("[mv] payment weekly refresh failed", expect.any(Error));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("rejects: stores the motive, notifies and does NOT fulfil the obligation", async () => {
@@ -480,6 +517,8 @@ describe("reviewReport", () => {
     const notifyValues = db.execCallsFor("notify-review")[0]?.values ?? [];
     expect(notifyValues).toContain("Aporte rechazado");
     expect(String(notifyValues.join(" "))).toContain("Referencia no coincide");
+    // Rejections wait for the 5-minute mv:refresh tick (D67).
+    expect(db.execCallsFor("mv-refresh")).toHaveLength(0);
   });
 
   it("treats losing the PENDING race as a conflict", async () => {

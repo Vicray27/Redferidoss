@@ -354,6 +354,30 @@ describe("cycle:reminders", () => {
   });
 });
 
+describe("mv:refresh", () => {
+  it("runs the CONCURRENTLY refresh outside any transaction or advisory lock", async () => {
+    const db = new JobFake();
+
+    const summary = await executeJob("mv:refresh", context(db));
+
+    expect(summary).toEqual({ refreshed: true });
+    expect(db.execCalls.map((call) => call.marker)).toEqual(["@job:mv-refresh"]);
+    const [refresh] = db.execCalls;
+    expect(refresh.sql).toContain("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_payment_weekly");
+    expect(refresh.values).toEqual([]);
+    // Deliberate (D67): PostgreSQL refuses CONCURRENTLY inside a transaction
+    // block, so this job takes neither the advisory lock nor a transaction.
+    expect(db.queryCalls).toHaveLength(0);
+  });
+
+  it("surfaces a failing refresh to the caller so the scheduler can isolate it", async () => {
+    const db = new JobFake();
+    db.execResults = [new Error("relation \"mv_payment_weekly\" does not exist")];
+
+    await expect(executeJob("mv:refresh", context(db))).rejects.toThrow(/mv_payment_weekly/);
+  });
+});
+
 describe("cycle:close", () => {
   const CYCLE_A = {
     id: "cccccccc-0000-0000-0000-000000000001",

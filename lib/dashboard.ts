@@ -382,11 +382,16 @@ export function createDashboardService(
         `,
         db.$queryRaw<WeeklySeriesPoint[]>`
           /* @dash:weekly-series */
+          -- Money comes from mv_payment_weekly (§14): the MV folds
+          -- payment_reports into (cycle, level, method, status) buckets on the
+          -- 5-minute refresh + on approval, so this chart stops scanning the
+          -- report table as it grows to 1M rows. A cycle with no reports yet
+          -- keeps returning zeros through COALESCE, exactly as before.
           SELECT c.period_key AS "periodKey", c.starts_at AS "startsAt",
-                 COALESCE((SELECT SUM(r.amount) FROM payment_reports r
-                   WHERE r.cycle_id = c.id AND r.status = 'APPROVED'), 0)::text AS "approvedTotal",
-                 (SELECT COUNT(*)::int FROM payment_reports r
-                   WHERE r.cycle_id = c.id) AS "reportsCount",
+                 COALESCE((SELECT SUM(m.total_amount) FROM mv_payment_weekly m
+                   WHERE m.cycle_id = c.id AND m.status = 'APPROVED'), 0)::text AS "approvedTotal",
+                 COALESCE((SELECT SUM(m."count") FROM mv_payment_weekly m
+                   WHERE m.cycle_id = c.id), 0)::int AS "reportsCount",
                  (SELECT COUNT(*)::int FROM cycle_obligations o
                    WHERE o.cycle_id = c.id) AS "obligationsCount"
           FROM payment_cycles c
@@ -396,13 +401,15 @@ export function createDashboardService(
         `,
         db.$queryRaw<LevelContribution[]>`
           /* @dash:level-contribution */
-          SELECT u.depth AS level, COALESCE(SUM(r.amount), 0)::text AS total,
-                 COUNT(*)::int AS reports
-          FROM payment_reports r
-          JOIN users u ON u.id = r.user_id
-          WHERE r.cycle_id = ${cycle.id}::uuid AND r.status = 'APPROVED'
-          GROUP BY u.depth
-          ORDER BY u.depth
+          -- Same MV: the approved money per tree level of the selected cycle.
+          -- The level is the depth captured at refresh time, which is the
+          -- users.depth the live query read before (§14, D68).
+          SELECT m.level AS level, COALESCE(SUM(m.total_amount), 0)::text AS total,
+                 COALESCE(SUM(m."count"), 0)::int AS reports
+          FROM mv_payment_weekly m
+          WHERE m.cycle_id = ${cycle.id}::uuid AND m.status = 'APPROVED'
+          GROUP BY m.level
+          ORDER BY m.level
         `,
         db.$queryRaw<ContributorRow[]>`
           /* @dash:top-contributors */

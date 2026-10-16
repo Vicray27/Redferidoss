@@ -175,6 +175,7 @@ describe("POST /api/cron/{job} — dispatch", () => {
       "cycle:close",
       "tree:verify",
       "files:gc",
+      "mv:refresh",
     ];
     for (const name of jobs) {
       expect((await call(name, authorized)).status, name).toBe(200);

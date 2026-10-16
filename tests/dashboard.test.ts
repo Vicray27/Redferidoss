@@ -38,7 +38,7 @@ const PRIOR_CYCLE_START = new Date("2026-10-05T05:00:00.000Z");
 type Handler = (values: unknown[]) => unknown;
 
 class DashboardFake implements DashboardDb {
-  readonly calls: Array<{ marker: string; values: unknown[] }> = [];
+  readonly calls: Array<{ marker: string; text: string; values: unknown[] }> = [];
   private readonly handlers = new Map<string, Handler>();
 
   on(marker: string, handler: Handler): this {
@@ -46,7 +46,7 @@ class DashboardFake implements DashboardDb {
     return this;
   }
 
-  callsFor(marker: string): Array<{ marker: string; values: unknown[] }> {
+  callsFor(marker: string): Array<{ marker: string; text: string; values: unknown[] }> {
     return this.calls.filter((call) => call.marker === marker);
   }
 
@@ -60,7 +60,7 @@ class DashboardFake implements DashboardDb {
     if (!marker) throw new Error(`DashboardFake: unmarked statement: ${text}`);
     const handler = this.handlers.get(marker);
     if (!handler) throw new Error(`DashboardFake: no handler for ${marker}`);
-    this.calls.push({ marker, values });
+    this.calls.push({ marker, text, values });
     return (await handler(values)) as T;
   }
 }
@@ -198,6 +198,18 @@ describe("getOverview", () => {
 
     expect(fake.valuesOf("weekly-series")).toEqual([CYCLE.startsAt, 26]);
     expect(fake.valuesOf("heatmap")).toEqual([CYCLE.startsAt, 26]);
+  });
+
+  it("reads the series and the level split from mv_payment_weekly (§14/D68)", async () => {
+    const fake = overviewFake();
+    await makeService(fake).getOverview(STAFF);
+
+    expect(fake.callsFor("weekly-series")[0]?.text).toContain("mv_payment_weekly");
+    expect(fake.callsFor("level-contribution")[0]?.text).toContain("mv_payment_weekly");
+    // KPIs and the heatmap still need live user/obligation data the MV does
+    // not carry: they must stay on the live tables.
+    expect(fake.callsFor("kpis")[0]?.text).not.toContain("mv_payment_weekly");
+    expect(fake.callsFor("heatmap")[0]?.text).not.toContain("mv_payment_weekly");
   });
 
   it("returns the series oldest-first and the heatmap keys in the same order", async () => {

@@ -52,6 +52,10 @@
 //   idx_notifications_unread     partial: WHERE read_at IS NULL      §5.9
 //   uq_report_user_cycle         partial unique: WHERE status <>
 //                               'REJECTED' (D4, enforces R7)          §5.5
+//   uq_mv_payment_weekly         unique on mv_payment_weekly
+//                               (cycle_id, level, method_id, status);
+//                               the MV is not a Prisma model, the
+//                               index is the CONCURRENTLY requirement §14
 //
 // `tstzrange` is NOT a column type anywhere in this schema: it appears only
 // inside the EXCLUDE constraint above, so no Unsupported("tstzrange") field

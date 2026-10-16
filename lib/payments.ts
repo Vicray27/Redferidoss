@@ -42,6 +42,7 @@ import {
 import { MS_PER_DAY } from "./cycles";
 import { ConflictError, NotFoundError, ValidationError } from "./errors";
 import { compareAmounts, formatAmount, parseAmount } from "./money";
+import { refreshPaymentWeeklyBestEffort } from "./mv-refresh";
 import type { SettingsReader } from "./settings";
 
 /** The narrower surface a transaction callback receives (D57). */
@@ -536,6 +537,10 @@ export function createPaymentsService(
       if (status === "APPROVED") {
         await fulfilObligation(cycle.id, actor.id, report.id);
         await notifyReview(actor.id, { reportId: report.id, cycleId: cycle.id, status, note: null });
+        // §14: the MV refreshes on approval — best effort, never failing the
+        // submission, and AFTER the write transaction above has committed
+        // (CONCURRENTLY cannot run inside one).
+        await refreshPaymentWeeklyBestEffort(db);
       }
 
       return { id: report.id, status, cycleId: cycle.id, periodKey: cycle.period_key, reportedAt: report.reported_at };
@@ -544,7 +549,14 @@ export function createPaymentsService(
     async reviewReport(actor, reportId, decision, note) {
       requireStaff(actor);
       assertDecision(decision);
-      return reviewOne(actor, reportId, decision, note ?? null);
+      const reviewed = await reviewOne(actor, reportId, decision, note ?? null);
+      // §14 "al aprobar un pago": refresh once per operation, best effort —
+      // reviewOne runs in autocommit, so the CONCURRENTLY refresh never lands
+      // inside a transaction (D67).
+      if (reviewed.status === "APPROVED") {
+        await refreshPaymentWeeklyBestEffort(db);
+      }
+      return reviewed;
     },
 
     async reviewMany(actor, reportIds, decision, note) {
@@ -585,6 +597,13 @@ export function createPaymentsService(
           // Anything else is a real failure: abort the batch, report the cause.
           throw error;
         }
+      }
+
+      // ONE refresh after the whole batch — not one per item (D67): the MV
+      // fold is identical, and a 500-item approval must not issue 500
+      // refreshes. Only approvals trigger it; rejections wait for the tick.
+      if (approved > 0) {
+        await refreshPaymentWeeklyBestEffort(db);
       }
 
       return { total: ids.length, approved, rejected, skipped };

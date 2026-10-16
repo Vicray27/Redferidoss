@@ -177,10 +177,23 @@ describe("reviewMany — per-item isolation", () => {
     // The single-review trail: obligation fulfilled and notice sent for R1 only.
     expect(db.execCallsFor("fulfil-obligation")).toHaveLength(1);
     expect(db.execCallsFor("notify-review")).toHaveLength(1);
+    // One MV refresh for the batch, never one per item (§14, D67).
+    expect(db.execCallsFor("mv-refresh")).toHaveLength(1);
     // Audit fields written by the shared UPDATE path.
     const [updateCall] = db.callsFor("review-update");
     expect(updateCall.values).toContain("APPROVED");
     expect(updateCall.values).toContain("admin-1");
+  });
+
+  it("does not refresh the MV when the batch approved nothing", async () => {
+    const { db, service } = buildBulk();
+    db.on("report-for-review", () => [pendingReport()])
+      .on("review-update", () => [{ id: R1, user_id: "u-1", cycle_id: "cycle-1" }]);
+
+    const result = await service.reviewMany(REVIEWER, [R1], "REJECTED", "monto incorrecto");
+
+    expect(result.rejected).toBe(1);
+    expect(db.execCallsFor("mv-refresh")).toHaveLength(0);
   });
 
   it("counts a lost UPDATE race as already reviewed, without fulfilling", async () => {

@@ -11,20 +11,24 @@ const names = (now: Date, timeZone: string) => computeDueJobs(now, timeZone).map
 
 describe("computeDueJobs", () => {
   it("matches the exact local minute in the global timezone, in registry order", () => {
+    // 13:00Z is also minute 780, a 5-minute stride: mv:refresh is due too.
     expect(names(NINE_AM_CARACAS, "America/Caracas")).toEqual([
       "cycle:ensure",
       "cycle:obligations",
       "cycle:reminders",
       "cycle:close",
+      "mv:refresh",
     ]);
   });
 
   it("is timezone-aware, not UTC", () => {
-    // The same instant is 13:00 UTC: hourly slots and nothing else.
+    // The same instant is 13:00 UTC: hourly slots plus the timezone-free
+    // interval job and nothing else.
     expect(names(NINE_AM_CARACAS, "UTC")).toEqual([
       "cycle:ensure",
       "cycle:obligations",
       "cycle:close",
+      "mv:refresh",
     ]);
   });
 
@@ -35,8 +39,30 @@ describe("computeDueJobs", () => {
       "cycle:obligations",
       "cycle:close",
       "tree:verify",
+      "mv:refresh",
     ]);
     expect(names(threeAmCaracas, "UTC")).not.toContain("tree:verify");
+  });
+
+  it("fires mv:refresh on absolute 5-minute epoch strides, in every timezone", () => {
+    // 07:03:40Z is minute 423: 423 % 5 !== 0, so the interval job waits.
+    const offStride = new Date("2026-01-15T07:03:40Z");
+    expect(names(offStride, "America/Caracas")).not.toContain("mv:refresh");
+    expect(names(offStride, "UTC")).not.toContain("mv:refresh");
+
+    // 07:05:12Z is minute 425: due, and identically due in both zones — a
+    // timezone change must not re-phase the cadence (§14, D67).
+    const onStride = new Date("2026-01-15T07:05:12Z");
+    expect(names(onStride, "America/Caracas")).toContain("mv:refresh");
+    expect(names(onStride, "UTC")).toContain("mv:refresh");
+  });
+
+  it("never fires a malformed interval instead of firing every minute", () => {
+    const broken = [{ ...JOBS[0]!, timing: { kind: "interval" as const, minutes: 0 } }];
+    const negative = [{ ...JOBS[0]!, timing: { kind: "interval" as const, minutes: -5 } }];
+
+    expect(computeDueJobs(NINE_AM_CARACAS, "UTC", broken)).toEqual([]);
+    expect(computeDueJobs(NINE_AM_CARACAS, "UTC", negative)).toEqual([]);
   });
 
   it("fires files:gc only on the local Sunday 04:00", () => {
@@ -53,7 +79,7 @@ describe("computeDueJobs", () => {
   });
 
   it("every registered job declares its timing", () => {
-    expect(JOBS).toHaveLength(6);
+    expect(JOBS).toHaveLength(7);
     for (const job of JOBS) expect(job.timing, job.name).toBeDefined();
   });
 
@@ -108,8 +134,8 @@ describe("startScheduler", () => {
     expect(timers).toHaveLength(1);
 
     timers[0]();
-    await vi.waitFor(() => expect(ran).toHaveLength(4));
-    expect(ran).toEqual(["cycle:ensure", "cycle:obligations", "cycle:reminders", "cycle:close"]);
+    await vi.waitFor(() => expect(ran).toHaveLength(5));
+    expect(ran).toEqual(["cycle:ensure", "cycle:obligations", "cycle:reminders", "cycle:close", "mv:refresh"]);
     expect(errors).toEqual(["[jobs] cycle:obligations failed"]);
     expect(timers).toHaveLength(2); // the loop scheduled the next minute
     handle.stop();
@@ -120,11 +146,11 @@ describe("startScheduler", () => {
     const handle = startScheduler({ ...deps, runJob: async (name) => ran.push(name) });
 
     timers[0]();
-    await vi.waitFor(() => expect(ran).toHaveLength(4));
+    await vi.waitFor(() => expect(ran).toHaveLength(5));
     expect(timers).toHaveLength(2);
 
     timers[1](); // same injected instant: same minute, must be a no-op
-    expect(ran).toHaveLength(4);
+    expect(ran).toHaveLength(5);
     expect(timers).toHaveLength(3); // but it still schedules the following one
     handle.stop();
   });
@@ -134,9 +160,9 @@ describe("startScheduler", () => {
     const handle = startScheduler({ ...deps, runJob: async (name) => ran.push(name) });
 
     timers[0]();
-    await vi.waitFor(() => expect(ran).toHaveLength(4));
+    await vi.waitFor(() => expect(ran).toHaveLength(5));
     handle.stop();
     timers[1]();
-    expect(ran).toHaveLength(4);
+    expect(ran).toHaveLength(5);
   });
 });

@@ -34,6 +34,7 @@ import {
   type CycleFrequency,
 } from "../lib/cycles";
 import { formatAmount, parseAmount } from "../lib/money";
+import { refreshPaymentWeekly } from "../lib/mv-refresh";
 import type { SettingsReader } from "../lib/settings";
 import { storage } from "../lib/storage";
 import type { TreeDivergence } from "../lib/tree";
@@ -670,6 +671,25 @@ async function filesGc({ db, removeObject }: JobRunContext): Promise<JobSummary>
   return { candidates: candidates.length, removed, failed, rateLimits };
 }
 
+/**
+ * `mv:refresh` — refreshes the dashboard's materialized view (§14).
+ *
+ * Deliberately NOT in LOCKED_JOBS: `REFRESH MATERIALIZED VIEW CONCURRENTLY`
+ * cannot run inside a transaction block, so D41's interactive transaction
+ * would break the very statement the job exists for. No lock is needed —
+ * the refresh is idempotent, two concurrent runs converge, and PostgreSQL
+ * serializes the CONCURRENTLY form internally anyway.
+ *
+ * There is nothing to inject for the test either: a failing statement is the
+ * only failure mode, and the scheduler's per-job isolation covers it (logged,
+ * next 5-minute slot is the retry). A missing mv_payment_weekly (migration
+ * 0005 not applied yet) surfaces here on every tick until it is applied.
+ */
+async function mvRefresh({ db }: JobRunContext): Promise<JobSummary> {
+  await refreshPaymentWeekly(db);
+  return { refreshed: true };
+}
+
 /** Job name -> runner. Only names listed in jobs/index.ts with implemented: true. */
 const RUNNERS: Record<string, JobRunner> = {
   "cycle:ensure": cycleEnsure,
@@ -678,6 +698,7 @@ const RUNNERS: Record<string, JobRunner> = {
   "cycle:close": cycleClose,
   "tree:verify": treeVerify,
   "files:gc": filesGc,
+  "mv:refresh": mvRefresh,
 };
 
 /**
@@ -693,6 +714,8 @@ const LOCKED_JOBS = new Set(["cycle:reminders", "cycle:close", "tree:verify"]);
 // files:gc stays out on purpose: every step is remove-if-present plus
 // delete-by-id, so concurrent runs converge instead of duplicating anything,
 // and holding a transaction across filesystem removals would be worse.
+// mv:refresh stays out because REFRESH MATERIALIZED VIEW CONCURRENTLY is
+// REJECTED inside a transaction block (§14) — the lock would abort the job.
 
 /**
  * Run one implemented job. The route checks the registry before calling, so a

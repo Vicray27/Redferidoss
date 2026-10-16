@@ -1266,3 +1266,68 @@ resuelve hacia lo más configurable (spec §18.7).
   6 call sites (3 rutas de `/api/network` + 3 páginas del portal) pasan
   `settings`; tests del helper y del servicio cubren dueño, staff, setting
   on/off.
+
+### D67 - mv_payment_weekly: vista materializada, refresh cada 5 min y al aprobar (F8)
+- Contexto: §14 pide `mv_payment_weekly(cycle_id, level, method_id, status,
+  total_amount, count)` refrescada con `REFRESH MATERIALIZED VIEW CONCURRENTLY`
+  cada 5 min y al aprobar un pago; la tabla `payment_reports` es la que §14
+  proyecta a 1M de filas, y el dashboard la escaneaba en cada carga.
+- Decisión: (1) Migración `0005_mv_payment_weekly` (escrita a mano, carpeta
+  con el formato `0001…0004` del repo; aplicada con `prisma migrate deploy`,
+  NO `migrate dev`, que renombraría la carpeta con timestamp y rompería la
+  convención y el drift checker). El `CREATE MATERIALIZED VIEW … AS SELECT`
+  puebla al crearse: un entorno recién migrado sirve números correctos antes
+  del primer tick. (2) `CREATE UNIQUE INDEX uq_mv_payment_weekly (cycle_id,
+  level, method_id, status)`: CONCURRENTLY exige un índice único sobre columnas
+  planas; el GROUP BY garantiza una fila por grupo. `method_id` es nullable:
+  probado empíricamente (probe en schema scratch) que el índice único y
+  CONCURRENTLY toleran el grupo NULL y detectan altas nuevas. El índice queda
+  listado en el bloque SQL-only de `schema.prisma` para el drift checker.
+  (3) El registro de jobs estrena el timing `{ kind: "interval", minutes }`:
+  stride absoluto de minutos epoch (:00, :05, :10… en toda zona horaria) —
+  un cambio de `general.timezone` no re-fasea la cadencia; intervalo inválido
+  no dispara nunca. (4) `mv:refresh` vive FUERA de `LOCKED_JOBS` (D41): 
+  PostgreSQL rechaza CONCURRENTLY dentro de un transaction block, y un 23P01
+  atrapado dentro de una tx abierta la dejaría abortada. Sin lock no hace
+  falta: el refresh es idempotente y PG serializa CONCURRENTLY por dentro.
+  (5) Al aprobar: `lib/payments.ts` refresca best-effort DESPUÉS de que la
+  escritura commiteó (`createReport` auto-aprobado tras su tx; `reviewReport`
+  en autocommit; `reviewMany` UNA vez si `approved > 0`, nunca una por ítem) y
+  se traga el fallo con `console.warn`: un refresh roto jamás falla una
+  revisión ya decidida; el tick de 5 min es el retry. Los rechazos esperan al
+  tick ("al aprobar un pago" es literal). (6) Una sola declaración compartida
+  en `lib/mv-refresh.ts` llevando AMBOS marcadores de test (`@pay:` y `@job:`).
+- Consecuencias: el dashboard deja de ser proporcional al conteo de reportes;
+  la frescura es ≤5 min (o inmediata al aprobar); verificado en vivo sobre la
+  DB dev (vista refresca CONCURRENTLY en 30 ms) y en schema scratch con datos
+  no triviales (MV == agregado vivo por EXCEPT en ambas direcciones; SQL viejo
+  vs nuevo idénticos fila a fila para series y niveles; refresco recoge un
+  reporte nuevo con filas NULL presentes).
+
+### D68 - El dashboard lee series y niveles desde la MV; KPIs y heatmap siguen vivos (F8)
+- Contexto: §14 acota la MV al dashboard; no toda consulta puede salir de
+  `(cycle, level, method, status)`.
+- Decisión: (1) `@dash:weekly-series` y `@dash:level-contribution` leen
+  `mv_payment_weekly` (COALESCE mantiene los ceros y el shape exacto; mismos
+  marcadores y mismos parámetros). (2) KPIs, heatmap y top lists quedan en
+  tablas vivas: necesitan datos por usuario/obligación (compliance, red,
+  autores) que la MV no contiene. (3) El `level` de la MV es el `users.depth`
+  capturado al refrescar — la equivalencia con la lectura viva quedó probada
+  empíricamente (valores y orden idénticos en los probes). (4) Un test del fake
+  pinnea que series y niveles mencionan `mv_payment_weekly` y que KPIs/heatmap
+  NO lo hacen (la frontera no puede moverse sin fallar).
+- Consecuencias: la staleness del dashboard está acotada por D67 (≤5 min +
+  aprobación); el contrato HTTP no cambia (mismo JSON).
+
+### D69 - Cupo del árbol y caché de settings: verificación sin rediseño (F8)
+- Contexto: §14 pide "cap de 500 nodos por llamada" en el árbol y una caché de
+  settings de ~60 s; ambas cosas se verifican antes de tocar código.
+- Decisión: (1) No existe `GET /api/network/tree`: el read path real es
+  `GET /api/network/children` con paginación por cursor y `limit` máximo de 50
+  por llamada — más estricto que el cap pedido, satisfecho por diseño; se
+  documenta el mapeo en vez de fabricar una ruta que nadie consume.
+  (2) La caché de settings ya existe (D9: `SETTINGS_CACHE_TTL_MS = 60_000`
+  con invalidación por NOTIFY): verificado, sin cambio de diseño.
+- Consecuencias: cero código nuevo para (1) y (2); la verificación queda como
+  evidencia textual en esta decisión y en los tests existentes de network y
+  settings.

@@ -97,6 +97,14 @@ export function computeDueJobs(
     if (timing.kind === "daily") {
       return clock.hour === timing.hour && clock.minute === timing.minute;
     }
+    if (timing.kind === "interval") {
+      // Absolute epoch-minute stride, deliberately NOT the zoned clock: a
+      // "every 5 minutes" cadence is the same schedule in every timezone, and
+      // a timezone change must not re-phase it (§14, D67). A malformed
+      // interval never fires instead of firing on every tick.
+      if (!Number.isInteger(timing.minutes) || timing.minutes <= 0) return false;
+      return Math.floor(now.getTime() / 60_000) % timing.minutes === 0;
+    }
     return clock.weekday === timing.weekday && clock.hour === timing.hour && clock.minute === timing.minute;
   });
 }

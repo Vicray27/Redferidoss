@@ -2,7 +2,7 @@
 // jobs/index.ts — §9 scheduled job registry.
 //
 // Every scheduled task in the spec is registered here so the cron route has a
-// single allow-list to validate `{job}` against. All six bodies live in
+// single allow-list to validate `{job}` against. All seven bodies live in
 // jobs/execute.ts; the cadence runs in jobs/scheduler.ts, started by
 // instrumentation.ts (D62), and the authenticated route stays as a
 // manual/external trigger. `implemented: true` is what lets the route hand
@@ -26,11 +26,18 @@
  *
  * `weekday` follows the JS convention (0 = Sunday) because the scheduler
  * derives it from Intl weekday names and the comparison stays a plain number.
+ *
+ * `interval` is the timezone-free kind, for cadences that are not clock times
+ * at all: it fires on absolute 5-minute strides of the epoch minute
+ * (:00, :05, :10… in every timezone), which is what §14 asks of the MV
+ * refresh. A timezone change must not move it, so it never reads the clock
+ * face.
  */
 export type JobTiming =
   | { kind: "hourly"; minute: number }
   | { kind: "daily"; hour: number; minute: number }
-  | { kind: "weekly"; weekday: number; hour: number; minute: number };
+  | { kind: "weekly"; weekday: number; hour: number; minute: number }
+  | { kind: "interval"; minutes: number };
 
 export interface JobDefinition {
   /** Path segment accepted by POST /api/cron/{job}. */
@@ -85,6 +92,13 @@ export const JOBS: readonly JobDefinition[] = [
     description: "Deletes orphaned proof objects from S3-compatible storage.",
     schedule: "weekly (Sunday 04:00)",
     timing: { kind: "weekly", weekday: 0, hour: 4, minute: 0 },
+    implemented: true,
+  },
+  {
+    name: "mv:refresh",
+    description: "Refreshes mv_payment_weekly for the dashboard aggregates (§14).",
+    schedule: "every 5 minutes",
+    timing: { kind: "interval", minutes: 5 },
     implemented: true,
   },
 ];
