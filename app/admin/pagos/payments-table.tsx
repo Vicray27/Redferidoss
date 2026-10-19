@@ -53,10 +53,13 @@ const DASH = "—";
 export function PaymentsTable({
   rows,
   cycles,
+  weekLabels,
   customFields,
 }: {
   rows: PaymentsTableRow[];
   cycles: CycleChoice[];
+  /** periodKey -> friendly week range, resolved on the server (same helper). */
+  weekLabels: Record<string, string>;
   /** Dashboard-visible fields: header per extra column (D57). */
   customFields: PaymentsExportField[];
 }) {
@@ -255,7 +258,9 @@ export function PaymentsTable({
                     aria-label={`Seleccionar el aporte de ${row.userName}`}
                   />
                 </td>
-                <td className="px-3 py-3">{row.periodKey}</td>
+                <td className="px-3 py-3" title={row.periodKey}>
+                  {weekLabels[row.periodKey] ?? row.periodKey}
+                </td>
                 <td className="px-3 py-3 text-xs">
                   <span className="block">Pago: {row.paidAtLabel}</span>
                   <span className="block text-muted-foreground">Reporte: {row.reportedAtLabel}</span>

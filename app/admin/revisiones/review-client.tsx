@@ -21,6 +21,8 @@ export interface ReviewRow {
   fullName: string;
   publicCode: string;
   periodKey: string;
+  /** Friendly week range; `periodKey` stays as the raw `title` tooltip. */
+  weekLabel: string;
   amount: string;
   currency: string;
   method: string;
@@ -119,7 +121,9 @@ export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
                     </span>
                   ) : null}
                 </td>
-                <td className="px-4 py-3">{row.periodKey}</td>
+                <td className="px-4 py-3" title={row.periodKey}>
+                  {row.weekLabel}
+                </td>
                 <td className="px-4 py-3">
                   {row.amount} {row.currency}
                   <span className="block text-xs text-muted-foreground">

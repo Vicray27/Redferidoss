@@ -428,8 +428,17 @@ function buildWhere(
     conditions.push(Prisma.sql`r.proof_key IS NULL`);
   }
   if (filters.q !== null) {
+    // One search box for the whole row: the person (name, code, email), the
+    // reference, the report note and the review note.
     conditions.push(
-      Prisma.sql`(r.reference ILIKE '%' || ${filters.q} || '%' OR r.note ILIKE '%' || ${filters.q} || '%')`,
+      Prisma.sql`(
+        r.reference ILIKE '%' || ${filters.q} || '%'
+        OR r.note ILIKE '%' || ${filters.q} || '%'
+        OR u.full_name ILIKE '%' || ${filters.q} || '%'
+        OR u.public_code ILIKE '%' || ${filters.q} || '%'
+        OR u.email::text ILIKE '%' || ${filters.q} || '%'
+        OR r.review_note ILIKE '%' || ${filters.q} || '%'
+      )`,
     );
   }
   for (const custom of filters.customFields) {

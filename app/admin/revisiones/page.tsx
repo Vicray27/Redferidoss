@@ -8,7 +8,7 @@ import { formatCustomValue } from "@/lib/custom-fields";
 import { createDashboardService } from "@/lib/dashboard";
 import { prisma } from "@/lib/db";
 import { createPaymentsService } from "@/lib/payments";
-import { createReportsService, dateLabel } from "@/lib/reports";
+import { createReportsService, dateLabel, weekRangeLabel } from "@/lib/reports";
 import { settings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 
@@ -65,11 +65,18 @@ export default async function ReviewPage({ searchParams }: { searchParams: Searc
     { cycleId: cycle?.id ?? null, method, q, hasProof, limit: pageSize, offset },
   );
 
+  // "2026-W43" is a database key, not UI copy: selects and cells show the
+  // friendly range and keep the raw key only as a `title` tooltip.
+  const weekLabels = new Map(
+    cycles.map((option) => [option.periodKey, weekRangeLabel(option.startsAt, option.endsAt)]),
+  );
+
   const rows: ReviewRow[] = queue.rows.map((row) => ({
     id: row.id,
     fullName: row.fullName,
     publicCode: row.publicCode,
     periodKey: row.periodKey,
+    weekLabel: weekLabels.get(row.periodKey) ?? row.periodKey,
     amount: row.amount,
     currency: row.currency,
     method: row.method,
@@ -113,7 +120,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Searc
               <option value="">Todas</option>
               {cycles.map((option) => (
                 <option key={option.id} value={option.periodKey}>
-                  {option.periodKey} · {dateLabel(option.startsAt)} – {dateLabel(option.endsAt)}
+                  {weekRangeLabel(option.startsAt, option.endsAt)}
                 </option>
               ))}
             </select>

@@ -333,6 +333,44 @@ export function dateLabel(date: Date): string {
   return `${day}/${month}/${date.getFullYear()}`;
 }
 
+const MONTHS_ES = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+] as const;
+
+/**
+ * Friendly week range: "Semana del 19 al 25 de octubre de 2026". The raw
+ * `period_key` ("2026-W43") is a database key, not UI copy; when the range
+ * crosses a month or a year, both ends spell theirs. Deterministic on purpose:
+ * no Intl and no locale data, so the server renders the same string everywhere.
+ */
+export function weekRangeLabel(startsAt: Date, endsAt: Date): string {
+  const startDay = startsAt.getDate();
+  const endDay = endsAt.getDate();
+  const startMonth = MONTHS_ES[startsAt.getMonth()] ?? "";
+  const endMonth = MONTHS_ES[endsAt.getMonth()] ?? "";
+  const startYear = startsAt.getFullYear();
+  const endYear = endsAt.getFullYear();
+
+  if (startYear === endYear && startsAt.getMonth() === endsAt.getMonth()) {
+    return `Semana del ${startDay} al ${endDay} de ${startMonth} de ${startYear}`;
+  }
+  if (startYear === endYear) {
+    return `Semana del ${startDay} de ${startMonth} al ${endDay} de ${endMonth} de ${startYear}`;
+  }
+  return `Semana del ${startDay} de ${startMonth} de ${startYear} al ${endDay} de ${endMonth} de ${endYear}`;
+}
+
 function reportLabel(row: ConsolidatedSheetRow): string {
   if (!row.reported) return "No reportó";
   return row.noActivity ? "Sin actividad" : "Reportó";
@@ -407,20 +445,32 @@ export function sheetFileName(periodKey: string, extension: "xlsx" | "csv"): str
 }
 
 /**
+ * The label for a set of live currencies: the single currency they share, or
+ * "varias monedas" if an admin changed `payments.currency` mid-cycle (§6).
+ * `null` when there is no money at all. The row-derived label and the
+ * paginated totals query share exactly these rules.
+ */
+export function currencySetLabel(currencies: Iterable<string | null>): string | null {
+  const distinct = new Set<string>();
+  for (const currency of currencies) {
+    if (currency !== null) distinct.add(currency);
+  }
+  if (distinct.size === 0) return null;
+  if (distinct.size === 1) return [...distinct][0] ?? null;
+  return "varias monedas";
+}
+
+/**
  * The currency to print next to the numeric totals: the single currency every
  * live amount shares, or "varias monedas" if an admin changed
  * `payments.currency` mid-cycle (§6). `null` when there is no money at all.
  */
 export function sharedCurrencyLabel(sheet: ConsolidatedSheet): string | null {
-  const currencies = new Set(
+  return currencySetLabel(
     sheet.rows
       .filter((row) => row.offeringState === "PENDING" || row.offeringState === "APPROVED")
-      .map((row) => row.currency)
-      .filter((value): value is string => value !== null),
+      .map((row) => row.currency),
   );
-  if (currencies.size === 0) return null;
-  if (currencies.size === 1) return [...currencies][0] ?? null;
-  return "varias monedas";
 }
 
 // -----------------------------------------------------------------------------

@@ -9,9 +9,9 @@ import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
 import {
   createReportsService,
-  dateLabel,
   sharedCurrencyLabel,
   sheetMatrix,
+  weekRangeLabel,
   type ConsolidatedSheet,
   type CycleOption,
   type ReportsService,
@@ -94,7 +94,7 @@ function SheetView({
             >
               {options.map((option) => (
                 <option key={option.id} value={option.periodKey}>
-                  {option.periodKey} · {dateLabel(option.startsAt)} – {dateLabel(option.endsAt)}
+                  {weekRangeLabel(option.startsAt, option.endsAt)}
                 </option>
               ))}
             </select>

@@ -362,6 +362,22 @@ describe("listPayments", () => {
     expect(collectSql(fake.valuesOf("rows")).join(" ")).toContain("proof_key IS NOT NULL");
   });
 
+  it("searches the whole row with q, including the person's name, code and email", async () => {
+    const fake = withRows([]);
+    const { authz } = makeAuthz();
+    const service = createPaymentsAdminService(fake, authz);
+
+    await service.listPayments(STAFF, parsePaymentsFilters(params({ q: "ana" })));
+
+    const sql = collectSql(fake.valuesOf("rows")).join(" ");
+    expect(sql).toContain("u.full_name ILIKE");
+    expect(sql).toContain("u.public_code ILIKE");
+    expect(sql).toContain("u.email::text ILIKE");
+    expect(sql).toContain("r.review_note ILIKE");
+    // One binding per searched column: reference, note, name, code, email, review note.
+    expect(flatten(fake.valuesOf("rows")).filter((value) => value === "ana")).toHaveLength(6);
+  });
+
   it("embeds the scope fragment for a restricted actor and nothing for staff", async () => {
     const restricted = withRows([]);
     const restrictedAuthz = makeAuthz({

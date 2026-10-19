@@ -18,7 +18,7 @@ import {
 } from "@/lib/dashboard";
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
-import { createReportsService, dateLabel, type CycleOption } from "@/lib/reports";
+import { createReportsService, weekRangeLabel, type CycleOption } from "@/lib/reports";
 import { cn } from "@/lib/utils";
 
 // =============================================================================
@@ -171,7 +171,7 @@ function MatrixView({
           >
             {options.map((option) => (
               <option key={option.id} value={option.periodKey}>
-                {option.periodKey} · {dateLabel(option.startsAt)} – {dateLabel(option.endsAt)}
+                {weekRangeLabel(option.startsAt, option.endsAt)}
               </option>
             ))}
           </select>

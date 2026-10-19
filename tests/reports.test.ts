@@ -22,6 +22,7 @@ import {
   SHEET_COLUMN_WIDTHS,
   SHEET_HEADERS,
   summarizeSheet,
+  weekRangeLabel,
   type ConsolidatedSheet,
   type ConsolidatedSheetRow,
   type ReportsAuthz,
@@ -514,6 +515,26 @@ describe("sharedCurrencyLabel", () => {
   it("returns null when no live amount exists", async () => {
     const sheet = await sheetOf([SILENT, REJECTED]);
     expect(sharedCurrencyLabel(sheet)).toBeNull();
+  });
+});
+
+describe("weekRangeLabel", () => {
+  it("names a same-month range with its year", () => {
+    expect(weekRangeLabel(new Date(2026, 9, 19), new Date(2026, 9, 25))).toBe(
+      "Semana del 19 al 25 de octubre de 2026",
+    );
+  });
+
+  it("spells both months when the range crosses one", () => {
+    expect(weekRangeLabel(new Date(2026, 8, 28), new Date(2026, 9, 4))).toBe(
+      "Semana del 28 de septiembre al 4 de octubre de 2026",
+    );
+  });
+
+  it("spells both years when the range crosses one", () => {
+    expect(weekRangeLabel(new Date(2025, 11, 29), new Date(2026, 0, 4))).toBe(
+      "Semana del 29 de diciembre de 2025 al 4 de enero de 2026",
+    );
   });
 });
 
