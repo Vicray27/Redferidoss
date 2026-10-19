@@ -335,7 +335,7 @@ const ROW_COLUMNS_SQL = Prisma.sql`
   COALESCE(pm.label, r.method::text) AS method,
   r.reference AS reference, r.status::text AS status,
   r.proof_key AS "proofKey",
-  rv.full_name AS "reviewedByName", rv.reviewed_at AS "reviewedAt",
+  rv.full_name AS "reviewedByName", r.reviewed_at AS "reviewedAt",
   r.review_note AS "reviewNote",
   COALESCE(cfd.custom, '{}'::jsonb) AS "custom"
 `;

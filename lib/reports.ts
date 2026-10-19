@@ -510,7 +510,7 @@ export function createReportsService(
                w.cell_new_visitors AS "cellNewVisitors", w.cell_new_cells AS "cellNewCells",
                w.visitors, w.note,
                r.id AS "reportId", r.status::text AS "offeringStatus", r.amount::text AS amount,
-               r.currency, COALESCE(pm.label, r.method::text) AS method, r.paid_at AS "paidAt"
+               r.currency, COALESCE(r.label, r.method::text) AS method, r.paid_at AS "paidAt"
         FROM users u
         LEFT JOIN users s ON s.id = u.sponsor_id
         LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
