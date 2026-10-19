@@ -124,9 +124,11 @@ export function MultiSelect({
         aria-controls={panelId}
         aria-label={`${label}: ${summary}`}
         onClick={() => setOpen((previous) => !previous)}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm"
+        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm"
       >
-        <span className="min-w-0 truncate">{summary}</span>
+        <span className="min-w-0 break-words text-left sm:truncate" title={summary}>
+          {summary}
+        </span>
         <span aria-hidden className="shrink-0 text-muted-foreground">
           ▾
         </span>
@@ -148,17 +150,17 @@ export function MultiSelect({
             }}
             placeholder={searchPlaceholder}
             aria-label={`Buscar en ${label}`}
-            className="mb-2 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+            className="mb-2 w-full rounded-md border border-input bg-background px-2 py-1.5 text-base sm:text-sm"
           />
 
-          <div className="max-h-64 overflow-y-auto">
+          <div className="max-h-[min(24rem,60dvh)] overflow-y-auto overscroll-contain">
             {visible.length === 0 ? (
               <p className="px-1 py-2 text-xs text-muted-foreground">Sin resultados.</p>
             ) : (
               <ul className="divide-y">
                 {visible.map((option) => (
                   <li key={option.value}>
-                    <label className="flex cursor-pointer items-center gap-2 px-1 py-2">
+                    <label className="flex min-h-11 cursor-pointer items-center gap-2 px-1 py-2.5 text-base sm:min-h-0 sm:py-2 sm:text-sm">
                       <input
                         type="checkbox"
                         checked={chosen.has(option.value)}

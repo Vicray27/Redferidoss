@@ -16,6 +16,7 @@
 // light up while the user reads `/admin/pagos`. Each subpage owns its item.
 // =============================================================================
 
+import { useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -88,6 +89,25 @@ export function SidebarNav({
   const area = pathname.startsWith("/portal") ? "portal" : "admin";
   const items = area === "portal" ? PORTAL_ITEMS : ADMIN_ITEMS;
   const crossLink = isStaffRole(role) ? STAFF_CROSSLINK[area] : null;
+  const linkRefs = useRef(new Map<string, HTMLAnchorElement>());
+
+  const registerLink = useCallback((href: string, node: HTMLAnchorElement | null) => {
+    if (node === null) linkRefs.current.delete(href);
+    else linkRefs.current.set(href, node);
+  }, []);
+
+  // Keep the current module visible in the horizontal strip. `block: "nearest"`
+  // avoids any vertical movement; only the strip's own overflow scrolls.
+  useEffect(() => {
+    if (variant !== "bar") return;
+    const allItems = crossLink ? [...items, crossLink] : items;
+    const active = allItems.find((item) => isActive(pathname, item.href));
+    if (!active) return;
+    linkRefs.current.get(active.href)?.scrollIntoView({
+      block: "nearest",
+      inline: "center",
+    });
+  }, [pathname, variant, crossLink, items]);
 
   return (
     <nav
@@ -104,6 +124,7 @@ export function SidebarNav({
           item={item}
           active={isActive(pathname, item.href)}
           variant={variant}
+          onLinkRef={registerLink}
         />
       ))}
 
@@ -117,6 +138,7 @@ export function SidebarNav({
             item={crossLink}
             active={isActive(pathname, crossLink.href)}
             variant={variant}
+            onLinkRef={registerLink}
           />
         </div>
       ) : null}
@@ -128,15 +150,18 @@ function NavLink({
   item,
   active,
   variant,
+  onLinkRef,
 }: {
   item: NavItem;
   active: boolean;
   variant: "list" | "bar";
+  onLinkRef: (href: string, node: HTMLAnchorElement | null) => void;
 }) {
   const Icon = item.icon;
 
   return (
     <Link
+      ref={(node) => onLinkRef(item.href, node)}
       href={item.href}
       aria-current={active ? "page" : undefined}
       className={cn(
@@ -144,7 +169,7 @@ function NavLink({
         active
           ? "bg-muted font-medium text-foreground"
           : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-        variant === "bar" && "whitespace-nowrap",
+        variant === "bar" && "min-h-11 whitespace-nowrap py-2.5",
       )}
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />

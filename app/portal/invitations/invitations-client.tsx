@@ -109,7 +109,7 @@ export function InvitationsClient({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4 text-center">
+          <div className="grid grid-cols-1 gap-4 text-center sm:grid-cols-3">
             <Metric label="Límite" value={String(quota.max)} />
             <Metric label="Usados" value={String(quota.used)} />
             <Metric label="Disponibles" value={String(quota.left)} strong />
@@ -205,7 +205,7 @@ export function InvitationsClient({
             <p className="text-sm text-muted-foreground">No hay invitaciones pendientes.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full min-w-[640px] text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="py-2 pr-4">Dirigida a</th>

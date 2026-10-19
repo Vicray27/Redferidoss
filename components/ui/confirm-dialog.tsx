@@ -161,7 +161,7 @@ export function ConfirmDialog({
             variant="outline"
             onClick={onCancel}
             disabled={busy}
-            className="h-9 px-3"
+            className="h-10 px-3 sm:h-9"
           >
             {cancelLabel}
           </Button>
@@ -171,7 +171,7 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={busy}
             className={cn(
-              "h-9 px-3",
+              "h-10 px-3 sm:h-9",
               variant === "danger" &&
                 "bg-destructive text-destructive-foreground hover:bg-destructive/90",
             )}

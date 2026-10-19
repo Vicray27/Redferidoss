@@ -11,7 +11,7 @@
 // business rules, only the confirm/prompt UX around them.
 // =============================================================================
 
-import { useState, useTransition } from "react";
+import { Fragment, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -153,7 +153,12 @@ export function PaymentsTable({
 
         {selectedIds.length > 0 ? (
           <>
-            <Button type="button" onClick={onApprove} disabled={busy} className="h-8 px-3">
+            <Button
+              type="button"
+              onClick={onApprove}
+              disabled={busy}
+              className="h-10 px-3 sm:h-8"
+            >
               Aprobar selección
             </Button>
             <Button
@@ -161,17 +166,17 @@ export function PaymentsTable({
               variant="outline"
               onClick={onReject}
               disabled={busy}
-              className="h-8 px-3"
+              className="h-10 px-3 sm:h-8"
             >
               Rechazar con motivo
             </Button>
 
-            <span className="flex items-center gap-1">
+            <span className="flex w-full flex-wrap items-center gap-1 sm:w-auto">
               <select
                 value={targetCycleId}
                 onChange={(event) => setTargetCycleId(event.target.value)}
                 aria-label="Semana destino para la reasignación"
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-base sm:h-8 sm:flex-initial sm:text-xs"
               >
                 <option value="">Semana destino…</option>
                 {cycles.map((cycle) => (
@@ -185,22 +190,22 @@ export function PaymentsTable({
                 variant="outline"
                 onClick={onReassign}
                 disabled={busy || targetCycleId === ""}
-                className="h-8 px-3"
+                className="h-10 px-3 sm:h-8"
               >
                 Reasignar
               </Button>
             </span>
 
-            <span className="flex items-center gap-1">
+            <span className="flex w-full flex-wrap items-center gap-1 sm:w-auto">
               <a
                 href={`/api/payments/export?ids=${encodeURIComponent(selectionQuery)}&format=xlsx`}
-                className={cn(buttonVariants({ variant: "outline" }), "h-8 px-3")}
+                className={cn(buttonVariants({ variant: "outline" }), "h-10 px-3 sm:h-8")}
               >
                 Exportar selección (.xlsx)
               </a>
               <a
                 href={`/api/payments/export?ids=${encodeURIComponent(selectionQuery)}&format=csv`}
-                className={cn(buttonVariants({ variant: "outline" }), "h-8 px-3")}
+                className={cn(buttonVariants({ variant: "outline" }), "h-10 px-3 sm:h-8")}
               >
                 (.csv)
               </a>
@@ -209,7 +214,7 @@ export function PaymentsTable({
         ) : null}
       </div>
 
-      <div className="overflow-x-auto rounded-lg border bg-background">
+      <div className="hidden overflow-x-auto rounded-lg border bg-background md:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -309,6 +314,113 @@ export function PaymentsTable({
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* One card per row on phones; the table above stays the md+ view. */}
+      <div className="space-y-3 md:hidden">
+        {rows.map((row) => (
+          <article key={row.id} className="rounded-lg border bg-background p-3 text-sm">
+            <div className="flex items-start gap-2">
+              <label className="-m-1 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center">
+                <input
+                  type="checkbox"
+                  checked={selected.has(row.id)}
+                  onChange={() => toggleOne(row.id)}
+                  aria-label={`Seleccionar el aporte de ${row.userName}`}
+                  className="h-5 w-5"
+                />
+              </label>
+
+              <div className="min-w-0 flex-1">
+                <a
+                  href={`/portal/network/${row.userId}`}
+                  className="break-words font-medium underline"
+                >
+                  {row.userName}
+                </a>
+                <span className="block font-mono text-xs text-muted-foreground">
+                  {row.userCode}
+                </span>
+              </div>
+
+              <span className="shrink-0 rounded-full border bg-muted px-2 py-0.5 text-xs">
+                {row.statusLabel}
+              </span>
+            </div>
+
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+              <dt className="text-xs text-muted-foreground">Semana</dt>
+              <dd className="min-w-0 break-words text-right" title={row.periodKey}>
+                {weekLabels[row.periodKey] ?? row.periodKey}
+              </dd>
+
+              <dt className="text-xs text-muted-foreground">Monto</dt>
+              <dd className="text-right">
+                {row.amount} {row.currency}
+              </dd>
+
+              <dt className="text-xs text-muted-foreground">Método</dt>
+              <dd className="min-w-0 break-words text-right">{row.method ?? DASH}</dd>
+
+              <dt className="text-xs text-muted-foreground">Fechas</dt>
+              <dd className="text-right text-xs">
+                <span className="block">Pago: {row.paidAtLabel}</span>
+                <span className="block text-muted-foreground">
+                  Reporte: {row.reportedAtLabel}
+                </span>
+              </dd>
+
+              <dt className="text-xs text-muted-foreground">Nivel</dt>
+              <dd className="text-right">{row.level}</dd>
+
+              <dt className="text-xs text-muted-foreground">Patrocinador</dt>
+              <dd className="min-w-0 break-words text-right">{row.sponsorName ?? DASH}</dd>
+
+              <dt className="text-xs text-muted-foreground">Referencia</dt>
+              <dd className="min-w-0 break-words text-right">{row.reference ?? DASH}</dd>
+
+              <dt className="text-xs text-muted-foreground">Comprobante</dt>
+              <dd className="text-right">
+                {row.proofKey ? (
+                  <a
+                    href={`/api/files/${row.proofKey}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-9 items-center py-1.5 underline"
+                  >
+                    Ver
+                  </a>
+                ) : (
+                  DASH
+                )}
+              </dd>
+
+              <dt className="text-xs text-muted-foreground">Revisión</dt>
+              <dd className="min-w-0 break-words text-right text-xs">
+                {row.reviewedByName ? (
+                  <>
+                    <span className="block">{row.reviewedByName}</span>
+                    <span className="block text-muted-foreground">{row.reviewedAtLabel}</span>
+                  </>
+                ) : (
+                  <span className="block text-muted-foreground">Sin revisar</span>
+                )}
+                {row.reviewNote ? (
+                  <span className="mt-1 block text-muted-foreground">Nota: {row.reviewNote}</span>
+                ) : null}
+              </dd>
+
+              {customFields.map((field, index) => (
+                <Fragment key={field.code}>
+                  <dt className="text-xs text-muted-foreground">{field.label}</dt>
+                  <dd className="min-w-0 break-words text-right">
+                    {row.customCells[index] ?? DASH}
+                  </dd>
+                </Fragment>
+              ))}
+            </dl>
+          </article>
+        ))}
       </div>
 
       {dialog?.kind === "approve" ? (

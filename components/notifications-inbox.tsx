@@ -75,7 +75,7 @@ export function NotificationsInbox({
                     <Button
                       type="submit"
                       variant="outline"
-                      className="h-8 px-3 text-xs"
+                      className="h-10 px-3 text-xs sm:h-8"
                       aria-label={`Marcar como leída: ${item.title}`}
                     >
                       Marcar leída

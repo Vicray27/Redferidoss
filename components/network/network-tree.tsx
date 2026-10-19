@@ -17,7 +17,7 @@
 // from data that does not exist yet would be worse than its absence.
 // =============================================================================
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
 import type { NetworkNode } from "@/lib/network";
 
@@ -167,6 +167,9 @@ function TreeNode({
   const state = states[node.id];
   const isOpen = expanded.has(node.id);
   const indent = Math.max(0, node.depth - rootDepth - 1) * 20;
+  // Capped on phones so deep levels keep a readable width; md+ keeps the exact
+  // indentation the tree always had.
+  const indentStyle = { "--tree-indent": `${indent}px` } as CSSProperties;
   const status = STATUS_LABEL[node.status] ?? {
     text: node.status,
     className: "bg-muted text-muted-foreground",
@@ -175,20 +178,22 @@ function TreeNode({
   return (
     <div role="treeitem" aria-expanded={isOpen}>
       <div
-        className="flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2"
-        style={{ marginLeft: indent }}
+        className="ml-[min(var(--tree-indent),1.5rem)] flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2 md:ml-[var(--tree-indent)]"
+        style={indentStyle}
       >
         {node.childrenCount > 0 ? (
           <button
             type="button"
             aria-label={isOpen ? `Contraer ${node.fullName}` : `Expandir ${node.fullName}`}
-            className="h-6 w-6 rounded border text-xs leading-none"
+            className="h-9 w-9 shrink-0 rounded border text-xs leading-none md:h-6 md:w-6"
             onClick={() => onToggle(node)}
           >
             {isOpen ? "−" : "+"}
           </button>
         ) : (
-          <span className="h-6 w-6 text-center text-xs leading-6 text-muted-foreground">·</span>
+          <span className="h-9 w-9 text-center text-xs leading-9 text-muted-foreground md:h-6 md:w-6 md:leading-6">
+            ·
+          </span>
         )}
 
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{node.fullName}</span>
@@ -202,7 +207,10 @@ function TreeNode({
           </span>
         ) : null}
 
-        <a className="text-xs underline" href={`/portal/network/${node.id}`}>
+        <a
+          className="inline-flex min-h-9 items-center py-1.5 text-xs underline md:min-h-0 md:py-0"
+          href={`/portal/network/${node.id}`}
+        >
           Ver ficha
         </a>
       </div>

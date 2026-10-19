@@ -177,7 +177,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                     maxLength={120}
                     placeholder="Nombre, correo, código, referencia o nota…"
                     defaultValue={filters.q ?? ""}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm"
                   />
                 </label>
 
@@ -227,7 +227,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
               <select
                 name="status"
                 defaultValue={filters.status ?? ""}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm"
               >
                 <option value="">Todos</option>
                 {PAYMENT_STATUSES.map((status) => (
@@ -243,7 +243,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
               <select
                 name="methodId"
                 defaultValue={filters.methodId ?? ""}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm"
               >
                 <option value="">Todos</option>
                 {methods.map((method) => (
@@ -262,7 +262,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
               <select
                 name="proofs"
                 defaultValue={filters.proofs ?? ""}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm"
               >
                 <option value="">Todos</option>
                 <option value="yes">Con comprobante</option>
@@ -288,7 +288,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                   <select
                     name="dateField"
                     defaultValue={filters.dateField}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm sm:w-auto"
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:w-auto sm:text-sm"
                   >
                     <option value="reported_at">Fecha de reporte</option>
                     <option value="paid_at">Fecha de pago</option>
@@ -298,14 +298,14 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                     name="dateFrom"
                     defaultValue={dayValue(filters.dateFrom)}
                     aria-label="Desde"
-                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-sm sm:w-auto"
+                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-base sm:w-auto sm:text-sm"
                   />
                   <input
                     type="date"
                     name="dateTo"
                     defaultValue={dayValue(filters.dateTo)}
                     aria-label="Hasta"
-                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-sm sm:w-auto"
+                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-base sm:w-auto sm:text-sm"
                   />
                 </div>
               </div>
@@ -321,7 +321,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                     placeholder="Mín"
                     defaultValue={filters.levelMin ?? ""}
                     aria-label="Nivel mínimo"
-                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-sm"
+                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-base sm:text-sm"
                   />
                   <input
                     type="number"
@@ -331,7 +331,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                     placeholder="Máx"
                     defaultValue={filters.levelMax ?? ""}
                     aria-label="Nivel máximo"
-                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-sm"
+                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-base sm:text-sm"
                   />
                 </div>
               </div>
@@ -346,7 +346,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                     placeholder="Mín"
                     defaultValue={filters.minAmount ?? ""}
                     aria-label="Monto mínimo"
-                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-sm"
+                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-base sm:text-sm"
                   />
                   <input
                     type="text"
@@ -355,7 +355,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                     placeholder="Máx"
                     defaultValue={filters.maxAmount ?? ""}
                     aria-label="Monto máximo"
-                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-sm"
+                    className="w-full rounded-md border border-input bg-background px-2 py-2 text-base sm:text-sm"
                   />
                 </div>
               </div>
@@ -368,7 +368,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                   maxLength={3}
                   placeholder="USD"
                   defaultValue={filters.currency ?? ""}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm uppercase"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-base uppercase sm:text-sm"
                 />
               </label>
 
@@ -383,7 +383,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                       type="text"
                       name={`cf_${field.code}`}
                       defaultValue={current?.value ?? ""}
-                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm"
                     />
                   </label>
                 );
@@ -396,7 +396,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                 <select
                   name="page_size"
                   defaultValue={String(filters.pageSize)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm"
                 >
                   {[50, 100, PAYMENTS_PAGE_SIZE_MAX].map((size) => (
                     <option key={size} value={size}>
@@ -409,7 +409,10 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
           </details>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button type="submit" className={cn(buttonVariants(), "h-10")}>
+            <button
+              type="submit"
+              className={cn(buttonVariants(), "w-full min-h-11 sm:w-auto sm:min-h-0")}
+            >
               Aplicar filtros
             </button>
             {hasActiveFilters(filters) ? (
@@ -421,7 +424,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
         </form>
 
         {rows.length === 0 ? (
-          <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
+          <p className="rounded-lg border border-dashed bg-background p-4 text-sm text-muted-foreground sm:p-6">
             No hay pagos que coincidan con los filtros.
           </p>
         ) : (

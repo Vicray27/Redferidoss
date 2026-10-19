@@ -63,27 +63,30 @@ export function SessionShell({
       </aside>
 
       <div className="w-full min-w-0 lg:pl-64">
-        <header className="sticky top-0 z-40 border-b bg-background lg:hidden">
-          <div className="flex items-center justify-between gap-3 px-4 py-3">
-            <p className="shrink-0 text-sm font-semibold tracking-tight">Red de Referidos</p>
+        {/* One sticky block: the module strip stays visible while the page scrolls. */}
+        <div className="sticky top-0 z-40 border-b bg-background lg:hidden">
+          <header className="flex items-center justify-between gap-3 px-4 py-3">
+            <p className="min-w-0 truncate text-sm font-semibold tracking-tight">
+              Red de Referidos
+            </p>
 
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               <NotificationBadge session={session} />
 
               <form action={logoutAction}>
-                <Button type="submit" variant="outline" className="h-8 px-3 text-xs">
+                <Button type="submit" variant="outline" className="h-9 shrink-0 px-3 text-xs">
                   Cerrar sesión
                 </Button>
               </form>
             </div>
-          </div>
-        </header>
+          </header>
 
-        <div className="border-b bg-background lg:hidden">
-          <SidebarNav role={session.role} variant="bar" />
+          <div className="border-t">
+            <SidebarNav role={session.role} variant="bar" />
+          </div>
         </div>
 
-        <main className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        <main className="w-full min-w-0 space-y-6 px-4 py-6 sm:px-6 lg:px-8">
           <div className="space-y-1">
             <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
             <p className="text-sm text-muted-foreground">{description}</p>

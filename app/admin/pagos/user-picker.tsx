@@ -182,7 +182,7 @@ function SingleUserPicker({
           aria-autocomplete="list"
           aria-expanded={open}
           aria-controls={listId}
-          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+          className="h-10 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
         />
       )}
 
@@ -194,12 +194,12 @@ function SingleUserPicker({
           {visible.length === 0 ? (
             <p className="px-2 py-2 text-xs text-muted-foreground">Sin resultados.</p>
           ) : (
-            <ul className="max-h-64 divide-y overflow-y-auto">
+            <ul className="max-h-[min(24rem,60dvh)] divide-y overflow-y-auto overscroll-contain">
               {visible.map((option) => (
                 <li key={option.id}>
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between gap-2 px-2 py-2 text-left hover:bg-muted/50"
+                    className="flex min-h-11 w-full items-center justify-between gap-2 px-2 py-2.5 text-left text-base hover:bg-muted/50 sm:min-h-0 sm:py-2 sm:text-sm"
                     onClick={() => choose(option)}
                   >
                     <span className="min-w-0 truncate">{option.fullName}</span>
@@ -272,9 +272,11 @@ function MultipleUserPicker({
         aria-controls={panelId}
         aria-label={`${label}: ${summary}`}
         onClick={() => setOpen((previous) => !previous)}
-        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm"
+        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm"
       >
-        <span className="min-w-0 truncate">{summary}</span>
+        <span className="min-w-0 break-words text-left sm:truncate" title={summary}>
+          {summary}
+        </span>
         <span aria-hidden className="shrink-0 text-muted-foreground">
           ▾
         </span>
@@ -312,7 +314,6 @@ function MultipleUserPicker({
           <input
             type="text"
             value={term}
-            autoFocus
             onChange={(event) => setTerm(event.target.value)}
             onKeyDown={(event) => {
               // Enter inside the filter form would submit the whole form; here
@@ -321,17 +322,17 @@ function MultipleUserPicker({
             }}
             placeholder={placeholder}
             aria-label={`Buscar en ${label}`}
-            className="mb-2 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+            className="mb-2 w-full rounded-md border border-input bg-background px-2 py-1.5 text-base sm:text-sm"
           />
 
           {visible.length === 0 ? (
             <p className="px-1 py-2 text-xs text-muted-foreground">Sin resultados.</p>
           ) : (
-            <div className="max-h-64 overflow-y-auto">
+            <div className="max-h-[min(24rem,60dvh)] overflow-y-auto overscroll-contain">
               <ul className="divide-y">
                 {visible.map((option) => (
                   <li key={option.id}>
-                    <label className="flex cursor-pointer items-center gap-2 px-1 py-2">
+                    <label className="flex min-h-11 cursor-pointer items-center gap-2 px-1 py-2.5 text-base sm:min-h-0 sm:py-2 sm:text-sm">
                       <input
                         type="checkbox"
                         checked={chosen.has(option.id)}
