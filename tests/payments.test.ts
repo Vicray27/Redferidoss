@@ -167,7 +167,7 @@ function buildService(overrides: { settings?: Record<string, unknown>; now?: Dat
     .on("report-for-review", () => [{ id: "report-1", user_id: ACTOR.id, cycle_id: "cycle-1", status: "PENDING" }])
     .on("review-update", () => [{ id: "report-1", user_id: ACTOR.id, cycle_id: "cycle-1" }])
     .on("my-reports", () => [MY_ROW])
-    .on("review-queue", () => [QUEUE_ROW]);
+    .on("review-queue", () => [{ ...QUEUE_ROW, totalCount: 1 }]);
 
   const settings = makeSettings(overrides.settings);
   const service = createPaymentsService(db, settings, createAuthorization(db, settings), { now: () => overrides.now ?? NOW });
@@ -539,13 +539,41 @@ describe("lists", () => {
     expect(db.valuesOf("my-reports")).toEqual([ACTOR.id, 100]);
   });
 
-  it("lists the pending review queue with the author and cycle, filtered by cycle when asked", async () => {
+  it("lists a filtered page of the pending queue and reports the window total", async () => {
     const { db, service } = buildService();
 
-    const rows = await service.listReviewQueue(REVIEWER, { cycleId: "cycle-1", limit: 10 });
+    const page = await service.listReviewQueue(REVIEWER, {
+      cycleId: "cycle-1",
+      method: "TRANSFER",
+      q: "  ana  ",
+      hasProof: true,
+      limit: 10,
+      offset: 20,
+    });
 
-    expect(rows).toEqual([QUEUE_ROW]);
-    expect(db.valuesOf("review-queue")).toEqual(["cycle-1", "cycle-1", 10]);
+    expect(page.rows).toEqual([QUEUE_ROW]);
+    expect(page.total).toBe(1);
+
+    const call = db.callsFor("review-queue")[0]!;
+    expect(call.text).toContain("COUNT(*) OVER()");
+    expect(call.text).toContain("r.proof_key IS NOT NULL");
+    expect(call.values).toContain("cycle-1");
+    expect(call.values).toContain("TRANSFER");
+    expect(call.values).toContain("ana");
+    expect(call.values).toContain(true);
+    expect(call.values).toContain(10);
+    expect(call.values).toContain(20);
+  });
+
+  it("defaults to the first 25 rows and takes total from the window count", async () => {
+    const { db, service } = buildService();
+    db.on("review-queue", () => [{ ...QUEUE_ROW, totalCount: 42 }]);
+
+    const page = await service.listReviewQueue(REVIEWER);
+
+    expect(page.rows).toEqual([QUEUE_ROW]);
+    expect(page.total).toBe(42);
+    expect(db.valuesOf("review-queue").slice(-2)).toEqual([25, 0]);
   });
 
   it("refuses a MEMBER before any statement runs (S4)", async () => {

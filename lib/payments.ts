@@ -178,6 +178,24 @@ export interface ReviewQueueRow {
   customValues: Array<{ label: string; value: unknown }>;
 }
 
+/** Staff filters of the §8.5 review queue; every field is optional. */
+export interface ReviewQueueFilters {
+  cycleId?: string | null;
+  /** Stored `payment_method` code (TRANSFER, MOBILE, …). */
+  method?: string | null;
+  /** Name, email or public code — trimmed; empty means no filter. */
+  q?: string | null;
+  /** `true` = only reports with proof, `false` = only without, null = all. */
+  hasProof?: boolean | null;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ReviewQueuePage {
+  rows: ReviewQueueRow[];
+  total: number;
+}
+
 /** A direct invitee and the fact of their offering inside a cycle (D39). */
 export interface DownlineOfferingRow {
   userId: string; fullName: string; publicCode: string; hasOffering: boolean;
@@ -194,7 +212,7 @@ export interface PaymentsService {
   reassignReports(actor: PaymentsActor, reportIds: readonly string[], targetCycleId: string): Promise<BulkReassignResult>;
   listMyReports(actor: PaymentsActor, options?: { limit?: number }): Promise<MyReportRow[]>;
   /** Staff-only (root cause of S4): the queue exposes amounts and references. */
-  listReviewQueue(actor: PaymentsActor, options?: { limit?: number; cycleId?: string }): Promise<ReviewQueueRow[]>;
+  listReviewQueue(actor: PaymentsActor, options?: ReviewQueueFilters): Promise<ReviewQueuePage>;
   /** §8.4/D39: the actor's direct invitees and their offering for a cycle. */
   downlineOfferings(actor: SessionActor, options: { cycleId: string; limit?: number }): Promise<DownlineOfferingRow[]>;
 }
@@ -264,6 +282,11 @@ export function createPaymentsService(
   const clampLimit = (raw: number | undefined): number => {
     if (raw === undefined || !Number.isFinite(raw)) return DEFAULT_LIST_LIMIT;
     return Math.min(Math.max(1, Math.trunc(raw)), MAX_LIST_LIMIT);
+  };
+
+  const clampOffset = (raw: number | undefined): number => {
+    if (raw === undefined || !Number.isFinite(raw)) return 0;
+    return Math.max(0, Math.trunc(raw));
   };
 
   const fulfilObligation = async (cycleId: string, userId: string, reportId: string): Promise<void> => {
@@ -698,15 +721,25 @@ export function createPaymentsService(
       if (actor.role !== "ROOT" && actor.role !== "ADMIN") {
         throw new ForbiddenError("Solo la administración puede revisar aportes.");
       }
+
       const limit = clampLimit(listOptions.limit);
-      return db.$queryRaw<ReviewQueueRow[]>`
+      const offset = clampOffset(listOptions.offset);
+      const cycleId = listOptions.cycleId ?? null;
+      const method = listOptions.method?.trim() || null;
+      const q = listOptions.q?.trim() || null;
+      const hasProof = listOptions.hasProof ?? null;
+
+      // One statement returns the page and its filtered total: COUNT(*) OVER()
+      // avoids a second scan of the same joins for the summary line.
+      const raw = await db.$queryRaw<Array<ReviewQueueRow & { totalCount: number }>>`
         /* @pay:review-queue */
         SELECT r.id, r.amount::text AS amount, r.currency,
                COALESCE(pm.label, r.method::text) AS method,
                r.paid_at AS "paidAt", r.reported_at AS "reportedAt", r.note, r.proof_key AS "proofKey",
                r.reference, r.user_id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
                r.cycle_id AS "cycleId", c.period_key AS "periodKey",
-               COALESCE(cv.custom_values, '[]'::jsonb) AS "customValues"
+               COALESCE(cv.custom_values, '[]'::jsonb) AS "customValues",
+               COUNT(*) OVER()::int AS "totalCount"
         FROM payment_reports r
         JOIN users u ON u.id = r.user_id
         JOIN payment_cycles c ON c.id = r.cycle_id
@@ -721,10 +754,22 @@ export function createPaymentsService(
           WHERE cfv.entity_id = r.id
         ) cv ON true
         WHERE r.status = 'PENDING'
-          AND (${listOptions.cycleId ?? null}::uuid IS NULL OR r.cycle_id = ${listOptions.cycleId ?? null}::uuid)
+          AND (${cycleId}::uuid IS NULL OR r.cycle_id = ${cycleId}::uuid)
+          AND (${method}::text IS NULL OR r.method::text = ${method}::text)
+          AND (${q}::text IS NULL
+            OR u.full_name ILIKE '%' || ${q}::text || '%'
+            OR u.email::text ILIKE '%' || ${q}::text || '%'
+            OR u.public_code = upper(${q}::text))
+          AND (${hasProof}::boolean IS NULL
+            OR (${hasProof}::boolean = true AND r.proof_key IS NOT NULL)
+            OR (${hasProof}::boolean = false AND r.proof_key IS NULL))
         ORDER BY r.reported_at ASC
-        LIMIT ${limit}
+        LIMIT ${limit} OFFSET ${offset}
       `;
+
+      const total = raw.length === 0 ? 0 : Number(raw[0]!.totalCount);
+      const rows = raw.map(({ totalCount: _totalCount, ...row }) => row);
+      return { rows, total };
     },
 
     async downlineOfferings(actor, listOptions) {

@@ -88,8 +88,13 @@ export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
         </p>
       ) : null}
 
-      <div className="overflow-x-auto rounded-lg border bg-background">
-        <table className="w-full text-sm">
+      {rows.length === 0 ? (
+        <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
+          No hay aportes pendientes de revisión. Cuando alguien reporte el suyo, aparecerá aquí.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border bg-background">
+          <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
               <th className="px-4 py-3 font-medium">Persona</th>
@@ -173,8 +178,9 @@ export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
