@@ -1627,3 +1627,33 @@ resuelve hacia lo más configurable (spec §18.7).
   legend); the "Filtrar" button now reads "Aplicar filtros", matching
   cumplimiento and reportes. The new `u.id IN (...)` fragment needs the same
   real-database probe any raw-SQL change gets (D77).
+
+### D80 - In-app confirm dialogs and a root-level toast provider
+- Context: destructive and bulk actions still called `window.confirm` /
+  `window.prompt` (payments bulk approve/reject/reassign, review
+  approve/reject, invitation revoke). Native dialogs cannot be styled, block
+  the event loop and, for rejections, discard the typed motive with no inline
+  validation. Action feedback lived in page-local message state, so a
+  `router.refresh()` could unmount the message together with the refreshed
+  subtree.
+- Decision: add `components/ui/toast.tsx` and
+  `components/ui/confirm-dialog.tsx` as dependency-free primitives, in the
+  same doctrine as tabs and multi-select. `ToastProvider` mounts once in
+  `app/layout.tsx`, outside the refreshed subtree: success toasts dismiss
+  after 4 s, errors after 8 s, the stack caps at four and the newest renders
+  on top. `ConfirmDialog` is controlled (`role="dialog"`, focus trap, Escape
+  and backdrop cancel, focus restore, default/danger variants); `MotiveDialog`
+  adds the required rejection textarea with the inline "El rechazo necesita un
+  motivo." error. Server guards and `revalidatePath` calls are unchanged.
+- Files: `components/ui/toast.tsx` (new),
+  `components/ui/confirm-dialog.tsx` (new), `app/layout.tsx`,
+  `app/globals.css`, `app/admin/pagos/payments-table.tsx`,
+  `app/admin/revisiones/review-client.tsx`,
+  `app/portal/invitations/invitations-client.tsx`, `e2e/journey.spec.ts`,
+  `tests/toast.test.ts` (new), `tests/confirm-dialog.test.ts` (new).
+- Consequences: `e2e/journey.spec.ts` now clicks the modal's confirm button
+  instead of accepting a native dialog, but still asserts the pinned
+  "Aporte aprobado." text: because the provider lives above the refreshed
+  subtree, the toast survives `router.refresh()`. Toasts are presentation
+  only; every rule, including the empty-motive refusal, still runs server-side.
+

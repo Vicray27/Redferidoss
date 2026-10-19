@@ -4,16 +4,19 @@
 // app/admin/revisiones/review-client.tsx — approve/reject buttons for the
 // pending queue.
 //
-// Rejection opens `window.prompt` for the motive: the service REFUSES a
-// rejection without one (it is what the member reads, and what the audit
-// trail keeps), so the form cannot pretend the note is optional. Approve is a
-// single click — the common case — and the server still owns every rule.
+// Rejection opens the shared motive dialog: the service REFUSES a rejection
+// without one (it is what the member reads, and what the audit trail keeps), so
+// the form cannot pretend the note is optional. Approve asks for confirmation
+// because it is irreversible from this screen; the server still owns every
+// rule. Feedback goes to the root toast stack so it survives `router.refresh()`.
 // =============================================================================
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog, MotiveDialog } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
 import { reviewPaymentReportAction } from "@/lib/payments-actions";
 
 export interface ReviewRow {
@@ -37,59 +40,41 @@ export interface ReviewRow {
 
 export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
   const router = useRouter();
+  const toast = useToast();
   const [busy, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [dialog, setDialog] = useState<
+    { kind: "approve"; row: ReviewRow } | { kind: "reject"; row: ReviewRow } | null
+  >(null);
 
-  const run = (reportId: string, decision: "APPROVED" | "REJECTED", note: string | null) => {
-    setMessage(null);
-    setBusyId(reportId);
+  const run = (row: ReviewRow, decision: "APPROVED" | "REJECTED", note: string | null) => {
+    setBusyId(row.id);
 
     startTransition(async () => {
-      const result = await reviewPaymentReportAction({ reportId, decision, note });
+      const result = await reviewPaymentReportAction({ reportId: row.id, decision, note });
       setBusyId(null);
+      setDialog(null);
 
       if (!result.ok) {
-        setMessage({ kind: "error", text: result.message ?? "No se pudo revisar el aporte." });
+        toast.error(result.message ?? "No se pudo revisar el aporte.");
         return;
       }
 
-      setMessage({
-        kind: "ok",
-        text: decision === "APPROVED" ? "Aporte aprobado." : "Aporte rechazado.",
-      });
+      toast.success(decision === "APPROVED" ? "Aporte aprobado." : "Aporte rechazado.");
       router.refresh();
     });
   };
 
   const onApprove = (row: ReviewRow) => {
-    if (!window.confirm(`¿Aprobar el aporte de ${row.fullName}?`)) return;
-    run(row.id, "APPROVED", null);
+    setDialog({ kind: "approve", row });
   };
 
   const onReject = (row: ReviewRow) => {
-    const motive = window.prompt(
-      `Motivo del rechazo del aporte de ${row.fullName} (lo verá la persona):`,
-    );
-    if (motive === null) return;
-    if (motive.trim() === "") {
-      setMessage({ kind: "error", text: "El rechazo necesita un motivo." });
-      return;
-    }
-    run(row.id, "REJECTED", motive.trim());
+    setDialog({ kind: "reject", row });
   };
 
   return (
     <div className="space-y-3">
-      {message ? (
-        <p
-          className={`text-sm ${message.kind === "ok" ? "text-foreground" : "text-destructive"}`}
-          role={message.kind === "error" ? "alert" : "status"}
-        >
-          {message.text}
-        </p>
-      ) : null}
-
       {rows.length === 0 ? (
         <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
           No hay aportes pendientes de revisión. Cuando alguien reporte el suyo, aparecerá aquí.
@@ -185,6 +170,28 @@ export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
           </table>
         </div>
       )}
+
+      {dialog?.kind === "approve" ? (
+        <ConfirmDialog
+          open
+          title={`¿Aprobar el aporte de ${dialog.row.fullName}?`}
+          confirmLabel="Aprobar"
+          busy={busy && busyId === dialog.row.id}
+          onConfirm={() => run(dialog.row, "APPROVED", null)}
+          onCancel={() => setDialog(null)}
+        />
+      ) : null}
+
+      {dialog?.kind === "reject" ? (
+        <MotiveDialog
+          open
+          title="Rechazar el aporte"
+          description={`Motivo del rechazo del aporte de ${dialog.row.fullName}.`}
+          busy={busy && busyId === dialog.row.id}
+          onConfirm={(motive) => run(dialog.row, "REJECTED", motive)}
+          onCancel={() => setDialog(null)}
+        />
+      ) : null}
     </div>
   );
 }

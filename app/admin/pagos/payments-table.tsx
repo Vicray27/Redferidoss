@@ -15,9 +15,16 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ConfirmDialog, MotiveDialog } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
 import { bulkReviewPaymentsAction, reassignPaymentsAction } from "@/lib/payments-actions";
 import type { PaymentsExportField } from "@/lib/payments-admin";
 import { cn } from "@/lib/utils";
+
+type BulkDialog =
+  | { kind: "approve" }
+  | { kind: "reject" }
+  | { kind: "reassign"; targetCycleId: string; targetLabel: string };
 
 export interface PaymentsTableRow {
   id: string;
@@ -64,10 +71,11 @@ export function PaymentsTable({
   customFields: PaymentsExportField[];
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [pending, startTransition] = useTransition();
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [targetCycleId, setTargetCycleId] = useState("");
-  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [dialog, setDialog] = useState<BulkDialog | null>(null);
 
   const selectedIds = rows.filter((row) => selected.has(row.id)).map((row) => row.id);
   const allSelected = rows.length > 0 && selectedIds.length === rows.length;
@@ -87,34 +95,27 @@ export function PaymentsTable({
   };
 
   const runReview = (decision: "APPROVED" | "REJECTED", note: string | null) => {
-    setMessage(null);
     startTransition(async () => {
       const result = await bulkReviewPaymentsAction({ reportIds: selectedIds, decision, note });
+      setDialog(null);
+
       if (!result.ok) {
-        setMessage({ kind: "error", text: result.message ?? "No se pudo revisar la selección." });
+        toast.error(result.message ?? "No se pudo revisar la selección.");
         return;
       }
-      setMessage({ kind: "ok", text: result.summary ?? "Listo." });
+
+      toast.success(result.summary ?? "Listo.");
       setSelected(new Set());
       router.refresh();
     });
   };
 
   const onApprove = () => {
-    if (!window.confirm(`¿Aprobar ${selectedIds.length} aportes seleccionados?`)) return;
-    runReview("APPROVED", null);
+    setDialog({ kind: "approve" });
   };
 
   const onReject = () => {
-    const motive = window.prompt(
-      `Motivo del rechazo para los ${selectedIds.length} aportes seleccionados (lo verá cada persona):`,
-    );
-    if (motive === null) return;
-    if (motive.trim() === "") {
-      setMessage({ kind: "error", text: "El rechazo necesita un motivo." });
-      return;
-    }
-    runReview("REJECTED", motive.trim());
+    setDialog({ kind: "reject" });
   };
 
   const onReassign = () => {
@@ -122,22 +123,20 @@ export function PaymentsTable({
     if (!target) return;
     // Same friendly week label as the table; the raw key stays in the option title.
     const targetLabel = weekLabels[target.periodKey] ?? target.periodKey;
-    if (
-      !window.confirm(
-        `¿Mover los reportes PENDIENTES seleccionados (${selectedIds.length}) a la semana ${targetLabel}? Los que ya fueron revisados se omiten.`,
-      )
-    ) {
-      return;
-    }
+    setDialog({ kind: "reassign", targetCycleId: target.id, targetLabel });
+  };
 
-    setMessage(null);
+  const runReassign = (targetCycleId: string) => {
     startTransition(async () => {
       const result = await reassignPaymentsAction({ reportIds: selectedIds, targetCycleId });
+      setDialog(null);
+
       if (!result.ok) {
-        setMessage({ kind: "error", text: result.message ?? "No se pudo reasignar la selección." });
+        toast.error(result.message ?? "No se pudo reasignar la selección.");
         return;
       }
-      setMessage({ kind: "ok", text: result.summary ?? "Listo." });
+
+      toast.success(result.summary ?? "Listo.");
       setSelected(new Set());
       router.refresh();
     });
@@ -147,15 +146,6 @@ export function PaymentsTable({
 
   return (
     <div className="space-y-3">
-      {message ? (
-        <p
-          className={`text-sm ${message.kind === "ok" ? "text-foreground" : "text-destructive"}`}
-          role={message.kind === "error" ? "alert" : "status"}
-        >
-          {message.text}
-        </p>
-      ) : null}
-
       <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2">
         <span className="text-xs text-muted-foreground">
           {selectedIds.length > 0 ? `${selectedIds.length} seleccionados` : "Ninguno seleccionado"}
@@ -320,6 +310,39 @@ export function PaymentsTable({
           </tbody>
         </table>
       </div>
+
+      {dialog?.kind === "approve" ? (
+        <ConfirmDialog
+          open
+          title={`¿Aprobar ${selectedIds.length} aportes seleccionados?`}
+          confirmLabel="Aprobar"
+          busy={busy}
+          onConfirm={() => runReview("APPROVED", null)}
+          onCancel={() => setDialog(null)}
+        />
+      ) : null}
+
+      {dialog?.kind === "reject" ? (
+        <MotiveDialog
+          open
+          title="Rechazar los aportes seleccionados"
+          description={`Motivo del rechazo para los ${selectedIds.length} aportes seleccionados.`}
+          busy={busy}
+          onConfirm={(motive) => runReview("REJECTED", motive)}
+          onCancel={() => setDialog(null)}
+        />
+      ) : null}
+
+      {dialog?.kind === "reassign" ? (
+        <ConfirmDialog
+          open
+          title={`¿Mover los reportes PENDIENTES seleccionados (${selectedIds.length}) a la semana ${dialog.targetLabel}? Los que ya fueron revisados se omiten.`}
+          confirmLabel="Reasignar"
+          busy={busy}
+          onConfirm={() => runReassign(dialog.targetCycleId)}
+          onCancel={() => setDialog(null)}
+        />
+      ) : null}
     </div>
   );
 }

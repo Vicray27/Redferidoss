@@ -68,10 +68,12 @@ test("invitar → registrar → reportar → aprobar → dashboard semanal", asy
     await expect(kpis.getByText("0.00 USD").first()).toBeVisible();
 
     // ---- 6. Root approves it in the review queue --------------------------
-    rootPage.on("dialog", (dialog) => dialog.accept());
     await rootPage.goto("/admin/revisiones");
     await expect(rootPage.getByText(E2E_MEMBER_NAME)).toBeVisible();
     await rootPage.getByRole("button", { name: "Aprobar" }).click();
+    const approveDialog = rootPage.getByRole("dialog");
+    await expect(approveDialog).toBeVisible();
+    await approveDialog.getByRole("button", { name: "Aprobar" }).click();
     await expect(rootPage.getByText("Aporte aprobado.")).toBeVisible();
     await expect(
       rootPage.getByText("No hay aportes pendientes de revisión", { exact: false }),

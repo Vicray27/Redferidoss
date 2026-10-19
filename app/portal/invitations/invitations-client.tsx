@@ -18,7 +18,9 @@ import { useRouter } from "next/navigation";
 
 import { LinkBox } from "@/components/link-box";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, Input, Label } from "@/components/ui/form";
+import { useToast } from "@/components/ui/toast";
 import {
   createInvitationAction,
   revokeInvitationAction,
@@ -47,16 +49,16 @@ export function InvitationsClient({
   allowMultiUse: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [busy, startTransition] = useTransition();
 
   const [emailTarget, setEmailTarget] = useState("");
   const [expiresInHours, setExpiresInHours] = useState("");
   const [lastCreatedPath, setLastCreatedPath] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [revokeId, setRevokeId] = useState<string | null>(null);
 
   const onCreate = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setMessage(null);
 
     startTransition(async () => {
       const result = await createInvitationAction({
@@ -65,49 +67,39 @@ export function InvitationsClient({
       });
 
       if (!result.ok || !result.link) {
-        setMessage({ kind: "error", text: result.message ?? "No se pudo crear la invitación." });
+        toast.error(result.message ?? "No se pudo crear la invitación.");
         return;
       }
 
       setLastCreatedPath(result.link);
       setEmailTarget("");
       setExpiresInHours("");
-      setMessage({ kind: "ok", text: "Invitación de un uso creada. Comparte el enlace o el QR." });
+      toast.success("Invitación de un uso creada. Comparte el enlace o el QR.");
       router.refresh();
     });
   };
 
   const onRevoke = (id: string) => {
-    if (!window.confirm("¿Revocar esta invitación? El enlace dejará de funcionar.")) return;
-    setMessage(null);
+    setRevokeId(id);
+  };
+
+  const runRevoke = () => {
+    if (revokeId === null) return;
 
     startTransition(async () => {
-      const result = await revokeInvitationAction(id);
+      const result = await revokeInvitationAction(revokeId);
+      setRevokeId(null);
       if (!result.ok) {
-        setMessage({ kind: "error", text: result.message ?? "No se pudo revocar la invitación." });
+        toast.error(result.message ?? "No se pudo revocar la invitación.");
         return;
       }
-      setMessage({ kind: "ok", text: "Invitación revocada." });
+      toast.success("Invitación revocada.");
       router.refresh();
     });
   };
 
   return (
     <div className="space-y-6">
-      {message ? (
-        <p
-          role={message.kind === "error" ? "alert" : "status"}
-          aria-live={message.kind === "error" ? "assertive" : "polite"}
-          className={
-            message.kind === "error"
-              ? "rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-              : "rounded-md border border-emerald-600/40 bg-emerald-50 p-3 text-sm text-emerald-800"
-          }
-        >
-          {message.text}
-        </p>
-      ) : null}
-
       <Card>
         <CardHeader>
           <CardTitle>Cupos de referidos</CardTitle>
@@ -250,6 +242,18 @@ export function InvitationsClient({
           )}
         </CardContent>
       </Card>
+
+      {revokeId !== null ? (
+        <ConfirmDialog
+          open
+          variant="danger"
+          title="¿Revocar esta invitación? El enlace dejará de funcionar."
+          confirmLabel="Revocar"
+          busy={busy}
+          onConfirm={runRevoke}
+          onCancel={() => setRevokeId(null)}
+        />
+      ) : null}
     </div>
   );
 }
