@@ -120,9 +120,11 @@ export function PaymentsTable({
   const onReassign = () => {
     const target = cycles.find((cycle) => cycle.id === targetCycleId);
     if (!target) return;
+    // Same friendly week label as the table; the raw key stays in the option title.
+    const targetLabel = weekLabels[target.periodKey] ?? target.periodKey;
     if (
       !window.confirm(
-        `¿Mover los reportes PENDIENTES seleccionados (${selectedIds.length}) a la semana ${target.periodKey}? Los que ya fueron revisados se omiten.`,
+        `¿Mover los reportes PENDIENTES seleccionados (${selectedIds.length}) a la semana ${targetLabel}? Los que ya fueron revisados se omiten.`,
       )
     ) {
       return;
@@ -183,8 +185,8 @@ export function PaymentsTable({
               >
                 <option value="">Semana destino…</option>
                 {cycles.map((cycle) => (
-                  <option key={cycle.id} value={cycle.id}>
-                    {cycle.periodKey}
+                  <option key={cycle.id} value={cycle.id} title={cycle.periodKey}>
+                    {weekLabels[cycle.periodKey] ?? cycle.periodKey}
                   </option>
                 ))}
               </select>

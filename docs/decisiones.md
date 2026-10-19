@@ -1512,7 +1512,7 @@ resuelve hacia lo más configurable (spec §18.7).
   KPI set is reduced to seven self-explanatory cards: "Reportes" is removed,
   "Incumplidos" is renamed to "Aportes incumplidos", and four cards gain a muted
   one-line hint; the data layer (`lib/dashboard.ts`) is untouched, so this is
-  display only. (4) /admin/reportes gains one donut ("Participaci�n de la
+  display only. (4) /admin/reportes gains one donut ("Participaci�n de la
   semana": Reportaron / No reportaron) placed between the stats grid and the
   matrix table, reusing the totals the page already loads (no new query).
 - Files: `components/charts/echart.tsx` (new), `components/charts/donut-chart.tsx`
@@ -1525,3 +1525,76 @@ resuelve hacia lo más configurable (spec §18.7).
   canvas renderer). The e2e journey keeps asserting the KPI money strings, which
   proves the serializable `valueLabel` path still renders 0.00/10.00 USD. The
   unit tests for `lib/charts.ts` and `lib/dashboard.ts` are untouched.
+
+### D76 - A dependency-free tabs primitive for the settings surfaces
+- Context: "Configuración" (40+ settings) and "Métodos de pago" stacked every
+  section in one long scroll, and the post-launch UX pass asked for a cleaner
+  organization without adding a UI dependency.
+- Decision: `components/ui/tabs.tsx` implements the WAI-ARIA tabs pattern
+  (roving tabindex, Arrow/Home/End navigation, `role="tablist"/"tab"/"tabpanel"`)
+  with every panel present but hidden (`hidden` attribute) on purpose: a tab
+  switch must never discard what a form already holds. Tabs accept an optional
+  numeric badge rendered as a pill with an accessible "N cambios sin guardar"
+  label. Configuración groups the catalog into five tabs by concern (general,
+  referral, payments, visibility, security) with a per-tab dirty badge plus the
+  existing global save bar; Métodos de pago splits catalog from creation.
+  `lib/ui-labels.ts` centralizes the Spanish label maps for group names and
+  values.
+- Files: `components/ui/tabs.tsx` (new), `lib/ui-labels.ts` (new),
+  `app/admin/configuracion/settings-form.tsx`,
+  `app/admin/metodos-pago/methods-manager.tsx`, `lib/settings-catalog.ts`.
+- Consequences: the settings form keeps a single submit path (the catalog is
+  still one form) and switching tabs never loses edits. The settings save flow
+  still serializes only the changed keys, so the badge count and the save bar
+  stay cheap.
+
+### D77 - Payment filters regrouped, name search and human week ranges
+- Context: the user called /admin/pagos a wall of inputs ("muchos inputs y
+  filtros, desordenado"), could not filter by person name, and did not
+  understand "2026-W43"-style week keys anywhere in the admin.
+- Decision: the filter bar is split into three fieldsets — "Persona y red",
+  "Semanas", "Estado, método y comprobante" — and every advanced filter (date
+  range, level, amounts, currency, custom fields, page size) moves into a
+  native `<details>` ("Más filtros") that opens by default only when at least
+  one advanced filter is active. The single `q` param now ALSO searches
+  `full_name`, `public_code` and `email::text` alongside reference and
+  `review_note`; the exact-person autocomplete picker stays. Week nomenclature:
+  `weekRangeLabel(startsAt, endsAt)` renders "Semana del 19 al 25 de octubre de
+  2026" in every operator-facing week select and table (pagos, revisiones,
+  cumplimiento, reportes) and in the payments reassignment dialog's target
+  selector and confirmation. Option values, exports and the payments export
+  `Semana` column stay on the raw `periodKey`, which remains available as a
+  `title` tooltip. No new URL params: the redesign reuses the existing ones.
+- Files: `app/admin/pagos/page.tsx`, `app/admin/pagos/payments-table.tsx`,
+  `app/admin/revisiones/page.tsx`, `app/admin/cumplimiento/page.tsx`,
+  `app/admin/reportes/page.tsx`, `lib/payments-admin.ts`, `lib/reports.ts`.
+- Consequences: the smoke spec asserts the "Semanas" legend with exact text, so
+  the exact word must stay unique on that page. The widened `q` raw SQL was
+  probed live against the real database before deploy: mock-based unit tests
+  pin the parameter stream but cannot catch an invalid SQL alias (that is how
+  the payments/reportes P0 slipped through once).
+
+### D78 - Paginated consolidated sheet with a week-wide stat strip; donut labels hidden
+- Context: (1) /admin/reportes' participation donut clipped its own outside
+  labels inside the 240px canvas, and (2) the weekly matrix listed ~1,900
+  people in one endless scroll. Pagination had to preserve the stat strip
+  (D48: totals and table cannot drift) and the three export faces.
+- Decision: (1) the donut hides pie `label`/`labelLine` — the information
+  stays in the legend, the stat cards and the tooltip. (2)
+  `getConsolidatedSheet` accepts `page`/`pageSize` (25/50/100, default 50): the
+  page query (`@reports:consolidated-sheet-page`) keeps the exact predicate of
+  the full sheet and adds a deterministic `ORDER BY u.full_name, u.id` with
+  LIMIT/OFFSET; a second aggregate query (`@reports:consolidated-totals`)
+  computes the WHOLE week (people, reported, attended, offered, visitors,
+  amounts, currencies) so the stat strip and chart describe the week, not the
+  page. `currencyLabel` comes from the totals query when paginated (fallback to
+  `sharedCurrencyLabel` for the unpaginated path). Without `page`, the original
+  unpaginated query path remains, so print and xlsx/csv exports are unchanged.
+  The page shows "mostrando X–Y" with Anterior/Siguiente links carrying only
+  cycle/page/page_size.
+- Files: `lib/reports.ts`, `app/admin/reportes/page.tsx`,
+  `components/charts/donut-chart.tsx`, `tests/reports.test.ts`.
+- Consequences: probed live against the real database: 1,887 people, page
+  19×100 = 87 rows, page totals and currency label identical to the full sheet.
+  The paginated ORDER BY gains `u.id` as tie-breaker; the unpaginated path
+  keeps its original single-column order (same set, no contract change).
