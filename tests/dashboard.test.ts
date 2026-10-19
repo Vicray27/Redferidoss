@@ -11,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import { ForbiddenError, type SessionActor } from "../lib/authz";
 import { NotFoundError } from "../lib/errors";
 import {
-  COMPLIANCE_MAX_USERS,
   COMPLIANCE_STATE_LABELS,
   complianceState,
   createDashboardService,
@@ -135,6 +134,7 @@ describe("staff guard", () => {
   const staffOnly = [
     ["getOverview", (service: ReturnType<typeof makeService>) => service.getOverview(MEMBER)],
     ["getCompliance", (service: ReturnType<typeof makeService>) => service.getCompliance(MEMBER)],
+    ["complianceLevels", (service: ReturnType<typeof makeService>) => service.complianceLevels(MEMBER)],
     ["searchUsers", (service: ReturnType<typeof makeService>) => service.searchUsers(MEMBER, "ana")],
     ["userOption", (service: ReturnType<typeof makeService>) => service.userOption(MEMBER, "u-1")],
     [
@@ -363,8 +363,15 @@ const COMPLIANCE_ROWS = [
   },
 ];
 
-function complianceFake(rows: unknown[] = COMPLIANCE_ROWS): DashboardFake {
-  return new DashboardFake().on("current-cycle", () => [CYCLE]).on("compliance", () => rows);
+function complianceFake(rows: unknown[] = COMPLIANCE_ROWS, total = 3): DashboardFake {
+  return new DashboardFake()
+    .on("current-cycle", () => [CYCLE])
+    .on("compliance", () => rows)
+    .on("compliance-count", () => [{ total }])
+    .on("compliance-window", () => [
+      { periodKey: "2026-W41" },
+      { periodKey: "2026-W42" },
+    ]);
 }
 
 describe("getCompliance", () => {
@@ -372,10 +379,15 @@ describe("getCompliance", () => {
     const fake = complianceFake();
     const matrix = await makeService(fake).getCompliance(STAFF);
 
-    // startsAt of the anchor + window + cap+1 candidates.
-    expect(fake.valuesOf("compliance")).toEqual([CYCLE.startsAt, 12, COMPLIANCE_MAX_USERS + 1]);
+    // startsAt of the anchor + window, then page size and offset.
+    const pageValues = fake.valuesOf("compliance");
+    expect(pageValues.slice(0, 2)).toEqual([CYCLE.startsAt, 12]);
+    expect(pageValues.slice(-2)).toEqual([50, 0]);
+    expect(fake.valuesOf("compliance-count").slice(0, 2)).toEqual([CYCLE.startsAt, 12]);
     expect(matrix.weeks).toBe(12);
-    expect(matrix.truncated).toBe(false);
+    expect(matrix.total).toBe(3);
+    expect(matrix.page).toBe(1);
+    expect(matrix.pageSize).toBe(50);
     expect(matrix.periodKeys).toEqual(["2026-W41", "2026-W42"]);
     expect(matrix.rows.map((row) => row.fullName)).toEqual(["Ana Pérez", "Beto Díaz", "Caro Gil"]);
     expect(matrix.rows[0].cells).toEqual([
@@ -396,25 +408,49 @@ describe("getCompliance", () => {
     expect(fake.callsFor("compliance")[1].values[1]).toBe(12);
   });
 
-  it("cuts the matrix at the cap and says so", async () => {
-    const rows = Array.from({ length: COMPLIANCE_MAX_USERS + 1 }, (_, index) => ({
-      cycleId: "c42",
-      periodKey: "2026-W42",
-      startsAt: CYCLE.startsAt,
-      userId: `u-${String(index).padStart(4, "0")}`,
-      fullName: `Persona ${index}`,
-      publicCode: `P${index}`,
+  it("passes person, level and paging filters to the page and the count", async () => {
+    const fake = complianceFake(COMPLIANCE_ROWS, 7);
+    const matrix = await makeService(fake).getCompliance(STAFF, {
+      q: "  ana  ",
       level: 1,
-      obligationId: `o-${index}`,
-      obligationStatus: "PENDING",
-      approved: null,
-      pending: null,
-      rejected: null,
-    }));
-    const matrix = await makeService(complianceFake(rows)).getCompliance(STAFF);
+      page: 2,
+      pageSize: 25,
+    });
 
-    expect(matrix.rows).toHaveLength(COMPLIANCE_MAX_USERS);
-    expect(matrix.truncated).toBe(true);
+    const pageValues = fake.valuesOf("compliance");
+    expect(pageValues).toContain("ana");
+    expect(pageValues).toContain(1);
+    expect(pageValues.slice(-2)).toEqual([25, 25]);
+    expect(fake.callsFor("compliance")[0]?.text).toContain("u.depth = ");
+
+    const countValues = fake.valuesOf("compliance-count");
+    expect(countValues).toContain("ana");
+    expect(countValues).toContain(1);
+    expect(fake.callsFor("compliance-count")[0]?.text).not.toContain("CROSS JOIN");
+    expect(matrix.total).toBe(7);
+    expect(matrix.page).toBe(2);
+    expect(matrix.pageSize).toBe(25);
+  });
+
+  it("renders every window column even when a page's people have no cell there", async () => {
+    const onlyW41 = COMPLIANCE_ROWS.filter((row) => row.periodKey === "2026-W41");
+    const fake = complianceFake(onlyW41);
+    const matrix = await makeService(fake).getCompliance(STAFF);
+
+    expect(fake.valuesOf("compliance-window")).toEqual([CYCLE.startsAt, 12]);
+    expect(matrix.periodKeys).toEqual(["2026-W41", "2026-W42"]);
+    expect(matrix.rows[0].cells.map((cell) => cell.periodKey)).toEqual(["2026-W41", "2026-W42"]);
+    expect(matrix.rows[0].cells[1].state).toBe("exempt");
+  });
+
+  it("lists the distinct levels for the level filter", async () => {
+    const fake = new DashboardFake().on("compliance-levels", () => [
+      { level: 0 },
+      { level: 1 },
+      { level: 2 },
+    ]);
+
+    expect(await makeService(fake).complianceLevels(STAFF)).toEqual([0, 1, 2]);
   });
 });
 

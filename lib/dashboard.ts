@@ -56,12 +56,24 @@ export interface DashboardServiceOptions {
 export const DASHBOARD_WINDOWS = CHART_WINDOWS;
 export type DashboardWindow = (typeof DASHBOARD_WINDOWS)[number];
 
-/** The compliance matrix is bounded by this many people (D54). */
-export const COMPLIANCE_MAX_USERS = 500;
 /** The compliance window choices; wider than 26 stops being readable (D54). */
 export const COMPLIANCE_WINDOWS = [4, 12, 26] as const;
 export type ComplianceWindow = (typeof COMPLIANCE_WINDOWS)[number];
 export const DEFAULT_COMPLIANCE_WINDOW: ComplianceWindow = 12;
+
+const COMPLIANCE_PAGE_SIZES = [25, 50, 100] as const;
+const DEFAULT_COMPLIANCE_PAGE_SIZE = 50;
+
+function compliancePage(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw)) return 1;
+  return Math.max(1, Math.trunc(raw));
+}
+
+function compliancePageSize(raw: number | undefined): number {
+  return raw !== undefined && (COMPLIANCE_PAGE_SIZES as readonly number[]).includes(raw)
+    ? raw
+    : DEFAULT_COMPLIANCE_PAGE_SIZE;
+}
 
 export function resolveWindow<T extends number>(
   raw: unknown,
@@ -182,8 +194,23 @@ export interface ComplianceMatrix {
   /** Chronological period keys of the window (columns). */
   periodKeys: string[];
   rows: ComplianceUserRow[];
-  /** True when more people matched than `COMPLIANCE_MAX_USERS`. */
-  truncated: boolean;
+  /** People matching the filters across the whole window. */
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** Staff filters and pagination of the compliance matrix. */
+export interface ComplianceOptions {
+  periodKey?: string;
+  weeks?: number;
+  /** Name, email or public code — trimmed; empty means no filter. */
+  q?: string;
+  /** Exact `users.depth`; integers >= 0 only. */
+  level?: number;
+  page?: number;
+  /** 25, 50 or 100; anything else falls back to the default. */
+  pageSize?: number;
 }
 
 // -----------------------------------------------------------------------------
@@ -219,7 +246,9 @@ export interface DashboardService {
   /** The eight KPI cards, the five chart series and the heatmap of one cycle. */
   getOverview(actor: SessionActor, options?: { periodKey?: string; weeks?: number }): Promise<DashboardOverview>;
   /** The user × week compliance matrix (D54). */
-  getCompliance(actor: SessionActor, options?: { periodKey?: string; weeks?: number }): Promise<ComplianceMatrix>;
+  getCompliance(actor: SessionActor, options?: ComplianceOptions): Promise<ComplianceMatrix>;
+  /** Distinct tree levels for the matrix's level filter; staff-only. */
+  complianceLevels(actor: SessionActor): Promise<number[]>;
   /** Autocomplete for filter #4: name, email or public code. Staff-only. */
   searchUsers(actor: SessionActor, query: string, options?: { limit?: number }): Promise<UserOption[]>;
   /** Resolve one user for the filter's initial label; null when it is gone. */
@@ -508,9 +537,19 @@ export function createDashboardService(
         ? await cycleByPeriodKey(complianceOptions.periodKey)
         : await currentCycle();
 
-      // cap + 1 candidates: the extra one is how the service KNOWS the matrix
-      // was cut, instead of silently rendering a half network as the truth.
-      const cap = COMPLIANCE_MAX_USERS;
+      const q = complianceOptions.q?.trim() ?? "";
+      const level =
+        typeof complianceOptions.level === "number" &&
+        Number.isInteger(complianceOptions.level) &&
+        complianceOptions.level >= 0
+          ? complianceOptions.level
+          : null;
+      const page = compliancePage(complianceOptions.page);
+      const pageSize = compliancePageSize(complianceOptions.pageSize);
+      const offset = (page - 1) * pageSize;
+
+      // The page is cut in the candidates CTE: the matrix then only joins the
+      // cycles/obligations of the people actually rendered.
       const raw = await db.$queryRaw<ComplianceRawRow[]>`
         /* @dash:compliance */
         WITH window_cycles AS (
@@ -523,14 +562,20 @@ export function createDashboardService(
         candidates AS (
           SELECT u.id, u.full_name, u.public_code, u.depth
           FROM users u
-          WHERE u.deleted_at IS NULL AND (
-            EXISTS (SELECT 1 FROM cycle_obligations o
-              JOIN window_cycles wc ON wc.id = o.cycle_id WHERE o.user_id = u.id)
-            OR EXISTS (SELECT 1 FROM payment_reports r
-              JOIN window_cycles wc ON wc.id = r.cycle_id WHERE r.user_id = u.id)
-          )
+          WHERE u.deleted_at IS NULL
+            AND (${q}::text = ''
+              OR u.full_name ILIKE '%' || ${q}::text || '%'
+              OR u.email::text ILIKE '%' || ${q}::text || '%'
+              OR u.public_code = upper(${q}::text))
+            AND (${level}::int IS NULL OR u.depth = ${level}::int)
+            AND (
+              EXISTS (SELECT 1 FROM cycle_obligations o
+                JOIN window_cycles wc ON wc.id = o.cycle_id WHERE o.user_id = u.id)
+              OR EXISTS (SELECT 1 FROM payment_reports r
+                JOIN window_cycles wc ON wc.id = r.cycle_id WHERE r.user_id = u.id)
+            )
           ORDER BY u.full_name, u.id
-          LIMIT ${cap + 1}
+          LIMIT ${pageSize} OFFSET ${offset}
         )
         SELECT c.id AS "cycleId", c.period_key AS "periodKey", c.starts_at AS "startsAt",
                u.id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
@@ -551,9 +596,45 @@ export function createDashboardService(
         ORDER BY u.full_name, u.id, c.starts_at
       `;
 
-      // The window columns come from the cycles themselves so a gap in the
-      // matrix (a cycle with no candidate rows) still renders its column.
-      const windowKeys = [...new Set(raw.map((row) => row.periodKey))].sort((a, b) =>
+      // The count repeats ONLY the candidate predicate/filters (no matrix
+      // join) so the summary is exact for the whole filtered network.
+      const countRows = await db.$queryRaw<Array<{ total: number }>>`
+        /* @dash:compliance-count */
+        WITH window_cycles AS (
+          SELECT id, period_key, starts_at
+          FROM payment_cycles
+          WHERE starts_at <= ${cycle.startsAt}
+          ORDER BY starts_at DESC
+          LIMIT ${weeks}
+        )
+        SELECT COUNT(*)::int AS total
+        FROM users u
+        WHERE u.deleted_at IS NULL
+          AND (${q}::text = ''
+            OR u.full_name ILIKE '%' || ${q}::text || '%'
+            OR u.email::text ILIKE '%' || ${q}::text || '%'
+            OR u.public_code = upper(${q}::text))
+          AND (${level}::int IS NULL OR u.depth = ${level}::int)
+          AND (
+            EXISTS (SELECT 1 FROM cycle_obligations o
+              JOIN window_cycles wc ON wc.id = o.cycle_id WHERE o.user_id = u.id)
+            OR EXISTS (SELECT 1 FROM payment_reports r
+              JOIN window_cycles wc ON wc.id = r.cycle_id WHERE r.user_id = u.id)
+          )
+      `;
+
+      // The window columns come from the cycles themselves, NOT from the
+      // paged rows: every column must render even when this page's people
+      // have no cell in some cycle.
+      const windowRows = await db.$queryRaw<Array<{ periodKey: string }>>`
+        /* @dash:compliance-window */
+        SELECT period_key AS "periodKey"
+        FROM payment_cycles
+        WHERE starts_at <= ${cycle.startsAt}
+        ORDER BY starts_at DESC
+        LIMIT ${weeks}
+      `;
+      const windowKeys = [...new Set(windowRows.map((row) => row.periodKey))].sort((a, b) =>
         a.localeCompare(b),
       );
 
@@ -575,23 +656,30 @@ export function createDashboardService(
         cellsByUser.get(row.userId)?.set(row.periodKey, complianceState(row));
       }
 
-      const allUsers = [...byUser.values()];
-      const truncated = allUsers.length > cap;
-      const users = truncated ? allUsers.slice(0, cap) : allUsers;
-
       return {
         cycle,
         weeks,
         periodKeys: windowKeys,
-        rows: users.map((userRow) => ({
+        rows: [...byUser.values()].map((userRow) => ({
           ...userRow,
           cells: windowKeys.map((periodKey) => ({
             periodKey,
             state: cellsByUser.get(userRow.userId)?.get(periodKey) ?? "exempt",
           })),
         })),
-        truncated,
+        total: Number(countRows[0]?.total ?? 0),
+        page,
+        pageSize,
       };
+    },
+
+    async complianceLevels(actor) {
+      requireStaff(actor);
+      const rows = await db.$queryRaw<Array<{ level: number }>>`
+        /* @dash:compliance-levels */
+        SELECT DISTINCT depth AS level FROM users WHERE deleted_at IS NULL ORDER BY depth
+      `;
+      return rows.map((row) => Number(row.level));
     },
 
     async searchUsers(actor, query, searchOptions = {}) {
