@@ -18,8 +18,8 @@ export interface DonutSlice {
   valueLabel: string;
 }
 
-// First slice: the brand royal tone. Second: its lighter step.
-const SLICE_COLORS = ["hsl(var(--primary))", "hsl(239.3, 40%, 75%)"];
+// First slice: the brand primary tone. Second: its lighter step.
+const SLICE_COLORS = ["hsl(var(--primary))", "hsl(223.6, 40%, 75%)"];
 const AXIS_TEXT = "hsl(var(--muted-foreground))";
 const SPLIT_LINE = "hsl(var(--border))";
 

@@ -19,7 +19,7 @@ export interface LineSeries {
 
 const SERIES_COLORS: Record<LineSeriesColor, string> = {
   primary: "hsl(var(--primary))",
-  secondary: "hsl(239.3, 60%, 62%)",
+  secondary: "hsl(223.6, 60%, 62%)",
 };
 const AXIS_TEXT = "hsl(var(--muted-foreground))";
 const SPLIT_LINE = "hsl(var(--border))";

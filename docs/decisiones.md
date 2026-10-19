@@ -1657,3 +1657,28 @@ resuelve hacia lo más configurable (spec §18.7).
   subtree, the toast survives `router.refresh()`. Toasts are presentation
   only; every rule, including the empty-motive refusal, still runs server-side.
 
+### D81 - VTRON palette replaces the F8 royal-blue tokens
+- Context: the product owner asked to adopt the tweakcn theme
+  `cmjhgwebp000404jl22fv5sh6` ("VTRON"). The app stores its design tokens as
+  space-separated HSL triplets in `app/globals.css` and consumes them through
+  `hsl(var(--token))` in the Tailwind config, so the palette had to be
+  translated to that format; the source publishes hex values.
+- Decision: apply the light-variant colors to the ten tokens the app maps:
+  background `#fcfcfc`, foreground `#0e142b`, muted `#ffffff`,
+  muted-foreground `#0e142b`, border `#e7e4e4`, primary `#2e67ff`,
+  primary-foreground `#ffffff`, destructive `#ff6c35` (orange),
+  destructive-foreground `#ffffff`, ring `#2e6aff`. The theme's other pieces
+  are intentionally NOT applied: the Open Sans font family and the 1.3rem
+  radius stay opt-in. The two chart colors that hardcoded the old hue move to
+  the new one: the donut's softer slice `hsl(223.6, 40%, 75%)` and the line
+  chart's secondary series `hsl(223.6, 60%, 62%)`; the ECharts token
+  fallbacks in `echart.tsx` track the new triplets. `heatColor()` is semantic
+  (red -> green compliance scale) and stays pinned by tests.
+- Files: `app/globals.css`, `components/charts/echart.tsx`,
+  `components/charts/donut-chart.tsx`, `components/charts/line-chart.tsx`.
+- Consequences: this supersedes the colour choice of D75; every surface that
+  reads a token adopts the palette with no markup change, and charts keep
+  resolving colors at runtime through `getComputedStyle`. The muted token is
+  pure white over a near-white background and muted-foreground equals
+  foreground: that is faithful to the source theme, not a bug.
+

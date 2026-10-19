@@ -3,18 +3,23 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Palette: tweakcn "VTRON" (theme cmjhgwebp000404jl22fv5sh6). The source
+   * publishes hex values; these are their HSL triplets in the app's format
+   * (D81). Light variant only: the app has no dark mode.
+   */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --border: 214.3 31.8% 91.4%;
-    --primary: 239.3 93.8% 19%;
-    --primary-foreground: 210 40% 98%;
+    --background: 0 0% 98.8%;
+    --foreground: 227.6 50.9% 11.2%;
+    --muted: 0 0% 100%;
+    --muted-foreground: 227.6 50.9% 11.2%;
+    --border: 0 5.9% 90%;
+    --primary: 223.6 100% 59%;
+    --primary-foreground: 0 0% 100%;
     /* Added in F2 for form validation feedback. */
-    --destructive: 0 72% 45%;
-    --destructive-foreground: 210 40% 98%;
-    --ring: 239.3 93.8% 19%;
+    --destructive: 16.3 100% 60.4%;
+    --destructive-foreground: 0 0% 100%;
+    --ring: 222.8 100% 59%;
   }
 
   * {

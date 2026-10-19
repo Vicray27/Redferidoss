@@ -40,10 +40,10 @@ echarts.use([
 
 /** Stable fallbacks in case the stylesheet has not loaded yet. */
 const TOKEN_FALLBACKS: Record<string, string> = {
-  "--primary": "239.3 93.8% 19%",
-  "--foreground": "222.2 84% 4.9%",
-  "--muted-foreground": "215.4 16.3% 46.9%",
-  "--border": "214.3 31.8% 91.4%",
+  "--primary": "223.6 100% 59%",
+  "--foreground": "227.6 50.9% 11.2%",
+  "--muted-foreground": "227.6 50.9% 11.2%",
+  "--border": "0 5.9% 90%",
 };
 
 const TOKEN_COLOR = /^hsl\(var\((--[a-z-]+)\)\)$/;
