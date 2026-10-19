@@ -26,6 +26,7 @@ import { PAYMENTS_EXPORT_MAX_ROWS } from "@/lib/payments-admin";
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
+const UUID2 = "22222222-2222-4222-8222-222222222222";
 
 const PAYMENT = {
   reportId: UUID,
@@ -147,7 +148,10 @@ describe("GET /api/payments/export", () => {
     signIn("admin-1");
 
     const response = await exportGet(
-      exportRequest("?format=csv&status=APPROVED&minAmount=10&cf_cargo=Diácono"),
+      exportRequest(
+        `?format=csv&status=APPROVED&minAmount=10&cf_cargo=Diácono` +
+          `&userId=${UUID}&userId=${UUID2}&userId=${UUID}`,
+      ),
     );
 
     expect(response.status).toBe(200);
@@ -178,6 +182,10 @@ describe("GET /api/payments/export", () => {
     expect(values).toContain("APPROVED");
     expect(values).toContain("10");
     expect(values).toContain("Diácono");
+    // Repeated `userId` params reach SQL as one typed bind per person, deduped
+    // (D79): the deep link from /admin/cumplimiento keeps working unchanged.
+    expect(values.filter((value) => value === UUID)).toHaveLength(1);
+    expect(values).toContain(UUID2);
   });
 
   it("defaults to a real XLSX workbook when no format is given", async () => {

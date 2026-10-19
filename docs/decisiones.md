@@ -1598,3 +1598,32 @@ resuelve hacia lo más configurable (spec §18.7).
   19×100 = 87 rows, page totals and currency label identical to the full sheet.
   The paginated ORDER BY gains `u.id` as tie-breaker; the unpaginated path
   keeps its original single-column order (same set, no contract change).
+
+### D79 - Searchable multi-select pickers for the payments filters
+- Context: /admin/pagos asked operators to ctrl-click inside a native
+  `<select multiple>` to filter weeks, and offered a single-value person
+  picker; multi-week and multi-person filters were unclear and once applied
+  they were invisible behind the control.
+- Decision: `components/ui/multi-select.tsx` (dependency-free, same doctrine
+  as the other ui primitives) replaces the weeks control: a summary button
+  that states the applied selection ("3 semanas seleccionadas"), a search box
+  filtering over the human week range AND the raw `periodKey`, a checkbox
+  list and "Quitar todas". The person picker gains a `multiple` mode: picking
+  a result adds a chip (deduped by id) that stays visible with its own
+  "Quitar". Both keep the GET protocol unchanged: one hidden input per value,
+  i.e. repeated params, the same shape `getAll` already read. Because the
+  person filter became a list, `PaymentsAdminFilters.userId` is now
+  `userIds: string[]`; SQL binds one `${id}::uuid` per element inside
+  `u.id IN (...)` (never text), and the parser dedupes and uuid-validates
+  every repeated `userId` param.
+- Files: `components/ui/multi-select.tsx` (new), `app/admin/pagos/page.tsx`,
+  `app/admin/pagos/user-picker.tsx`, `lib/payments-admin.ts`,
+  `tests/multi-select.test.ts` (new), `tests/payments-admin.test.ts`,
+  `tests/payments-routes.test.ts`.
+- Consequences: the param names did not change, so the existing deep link
+  from /admin/cumplimiento (`?userId=<uuid>&cycles=<key>`) and the export
+  links keep working; one `userId` now parses as a one-element list. The
+  smoke spec still finds exactly one exact "Semanas" text node (the fieldset
+  legend); the "Filtrar" button now reads "Aplicar filtros", matching
+  cumplimiento and reportes. The new `u.id IN (...)` fragment needs the same
+  real-database probe any raw-SQL change gets (D77).

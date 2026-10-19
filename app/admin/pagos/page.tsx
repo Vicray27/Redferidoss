@@ -61,11 +61,17 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
     customFieldCodes: customFields.map((field) => field.code),
   });
 
-  const [page, userOption, subtreeOption] = await Promise.all([
+  const [page, userOptions, subtreeOption] = await Promise.all([
     admin.listPayments(session, filters),
-    filters.userId ? dashboard.userOption(session, filters.userId) : Promise.resolve(null),
+    // One lookup per repeated `userId` param; unknown ids come back null and
+    // are simply not rendered as chips (the SQL filter still applies to them).
+    Promise.all(filters.userIds.map((id) => dashboard.userOption(session, id))),
     filters.subtreeOf ? dashboard.userOption(session, filters.subtreeOf) : Promise.resolve(null),
   ]);
+
+  const initialUserOptions = userOptions.filter(
+    (option): option is NonNullable<typeof option> => option !== null,
+  );
 
   // One dashboard-visible field = one extra column of the table AND of the
   // export (D57): both read the same field list, so they cannot drift apart.
@@ -176,7 +182,8 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                   name="userId"
                   label="Persona exacta"
                   placeholder="Nombre, código o correo…"
-                  initial={userOption}
+                  multiple
+                  initialSelected={initialUserOptions}
                 />
 
                 <UserPickerField
@@ -204,7 +211,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                 summaryNoun="semana"
               />
               <p className="mt-1 text-[10px] text-muted-foreground">
-                Elegí una o más semanas.
+                Elige una o más semanas.
               </p>
             </fieldset>
           </div>
@@ -477,7 +484,7 @@ function filterQuery(filters: PaymentsAdminFilters): URLSearchParams {
   const to = dayValue(filters.dateTo);
   if (to !== "") query.set("dateTo", to);
   if (filters.status !== null) query.set("status", filters.status);
-  if (filters.userId !== null) query.set("userId", filters.userId);
+  filters.userIds.forEach((id) => query.append("userId", id));
   if (filters.subtreeOf !== null) query.set("subtreeOf", filters.subtreeOf);
   if (filters.levelMin !== null) query.set("levelMin", String(filters.levelMin));
   if (filters.levelMax !== null) query.set("levelMax", String(filters.levelMax));

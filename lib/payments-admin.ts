@@ -78,8 +78,8 @@ export interface PaymentsAdminFilters {
   dateTo: Date | null;
   /** Filter 3. */
   status: PaymentStatusFilter | null;
-  /** Filter 4. */
-  userId: string | null;
+  /** Filter 4 — repeated `userId` params, deduped and uuid-validated. */
+  userIds: string[];
   /** Filter 5 — "pagos de la red de X" over the report's snapshot_path. */
   subtreeOf: string | null;
   /** Filter 6 — exact level is levelMin === levelMax. */
@@ -215,6 +215,19 @@ export function parsePaymentsFilters(
     .map((value) => value.trim())
     .filter((value) => value !== "");
 
+  // Filter 4 is a MULTI-select reusing the same param name (D79): the old
+  // single `userId=<uuid>` deep link from /admin/cumplimiento still parses to a
+  // one-element list, and malformed or repeated ids degrade like every other
+  // filter — dropped and deduped, never bound.
+  const userIds = [
+    ...new Set(
+      input
+        .getAll("userId")
+        .map((value) => asUuid(value.trim()))
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+
   const dateField: PaymentsDateField =
     input.get("dateField") === "paid_at" ? "paid_at" : "reported_at";
 
@@ -275,7 +288,7 @@ export function parsePaymentsFilters(
     dateFrom,
     dateTo,
     status,
-    userId: asUuid(trimmed(input.get("userId"))),
+    userIds,
     subtreeOf: asUuid(trimmed(input.get("subtreeOf"))),
     levelMin,
     levelMax,
@@ -298,7 +311,7 @@ export function hasActiveFilters(filters: PaymentsAdminFilters): boolean {
     filters.dateFrom !== null ||
     filters.dateTo !== null ||
     filters.status !== null ||
-    filters.userId !== null ||
+    filters.userIds.length > 0 ||
     filters.subtreeOf !== null ||
     filters.levelMin !== null ||
     filters.levelMax !== null ||
@@ -393,8 +406,12 @@ function buildWhere(
   if (filters.status !== null) {
     conditions.push(Prisma.sql`r.status = ${filters.status}::report_status`);
   }
-  if (filters.userId !== null) {
-    conditions.push(Prisma.sql`u.id = ${filters.userId}::uuid`);
+  if (filters.userIds.length > 0) {
+    // One typed bind per selected person (same shape as the selection export):
+    // the uuids are parameters, never text spliced into the statement.
+    conditions.push(
+      Prisma.sql`u.id IN (${Prisma.join(filters.userIds.map((id) => Prisma.sql`${id}::uuid`))})`,
+    );
   }
   if (filters.subtreeOf !== null) {
     // "Pagos de la red de X": the reporter's path AT SUBMISSION TIME falls

@@ -167,7 +167,7 @@ describe("parsePaymentsFilters", () => {
       dateFrom: null,
       dateTo: null,
       status: null,
-      userId: null,
+      userIds: [],
       subtreeOf: null,
       levelMin: null,
       levelMax: null,
@@ -214,9 +214,19 @@ describe("parsePaymentsFilters", () => {
     const filters = parsePaymentsFilters(
       params({ userId: U1, subtreeOf: "not-a-uuid", methodId: U2.toUpperCase() }),
     );
-    expect(filters.userId).toBe(U1);
+    expect(filters.userIds).toEqual([U1]);
     expect(filters.subtreeOf).toBeNull();
     expect(filters.methodId).toBe(U2);
+  });
+
+  it("reads multi-select userIds from repeated params, deduped and uuid-validated", () => {
+    const filters = parsePaymentsFilters(
+      params({ userId: [U1, "not-a-uuid", ` ${U1} `, "", ` ${U2} `] }),
+    );
+    expect(filters.userIds).toEqual([U1, U2]);
+    expect(hasActiveFilters(filters)).toBe(true);
+    // All-garbage pills degrade to "no filter", never to a bound value.
+    expect(parsePaymentsFilters(params({ userId: ["nope", ""] })).userIds).toEqual([]);
   });
 
   it("normalizes the level range", () => {
@@ -360,6 +370,24 @@ describe("listPayments", () => {
     expect(collectSql(fake.valuesOf("rows")).join(" ")).toContain("r.paid_at");
     // Proofs yes -> IS NULL check happens in SQL, not by binding a flag.
     expect(collectSql(fake.valuesOf("rows")).join(" ")).toContain("proof_key IS NOT NULL");
+  });
+
+  it("binds one typed parameter per selected person in the IN list, never as text", async () => {
+    const fake = withRows([]);
+    const { authz } = makeAuthz();
+    const service = createPaymentsAdminService(fake, authz);
+
+    const filters = parsePaymentsFilters(params({ userId: [U1, U2] }));
+    await service.listPayments(STAFF, filters);
+
+    const sql = collectSql(fake.valuesOf("rows")).join(" ");
+    expect(sql).toContain("u.id IN (");
+    // The uuids are parameters, not text spliced into the statement.
+    expect(sql).not.toContain(U1);
+    expect(sql).not.toContain(U2);
+    const scalars = flatten(fake.valuesOf("rows"));
+    expect(scalars.filter((value) => value === U1)).toHaveLength(1);
+    expect(scalars.filter((value) => value === U2)).toHaveLength(1);
   });
 
   it("searches the whole row with q, including the person's name, code and email", async () => {
