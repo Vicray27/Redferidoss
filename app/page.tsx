@@ -3,6 +3,7 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { isStaffRole, landingPathForRole } from "@/lib/auth/guards";
 import { getSession } from "@/lib/auth/require";
+import { ROLE_LABELS } from "@/lib/ui-labels";
 import { cn } from "@/lib/utils";
 
 export default async function Home() {
@@ -16,8 +17,8 @@ export default async function Home() {
       <h1 className="text-3xl font-bold tracking-tight">Red de Referidos</h1>
       <p className="max-w-xl text-center text-sm text-muted-foreground">
         {session
-          ? `Sesión activa como ${session.fullName} (${session.role}).`
-          : "Base ejecutable con migraciones, catálogo de settings y autenticación real."}
+          ? `Sesión activa como ${session.fullName} (${ROLE_LABELS[session.role] ?? session.role}).`
+          : "Administra tu red, tus aportes y tu cumplimiento semanal."}
       </p>
 
       <div className="flex gap-3">

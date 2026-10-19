@@ -68,7 +68,7 @@ const PUBLIC_CODE_ATTEMPTS = 5;
  * already in the network receives exactly what a caller who mistyped gets.
  */
 export const REGISTRATION_CONFLICT_MESSAGE =
-  "No se pudo completar el registro con esos datos. Si ya tienes una cuenta, inicia sesión y pide tu link desde el portal.";
+  "No se pudo completar el registro con esos datos. Si ya tienes una cuenta, inicia sesión y pide tu enlace desde el portal.";
 
 export class RegistrationConflictError extends AppError {
   readonly reason: string;
@@ -244,7 +244,7 @@ export async function registerUser(
     const invite = await invitations.resolveInvite(input.invite);
 
     if (locked.status !== "ACTIVE") {
-      throw new AppError(404, "INVITE_INVALID", "Este link de invitación no es válido o ya no está disponible.");
+      throw new AppError(404, "INVITE_INVALID", "Este enlace de invitación no es válido o ya no está disponible.");
     }
 
     // A directed invitation only works for the email it was sent to.
@@ -367,11 +367,11 @@ export async function registerUser(
     // --- consume the single-use invitation ----------------------------------
     if (invite.kind === "SINGLE" && invite.invitationId !== null) {
       const consumed = await invitations.consume(invite.invitationId);
-      if (!consumed) {
-        // Revoked or exhausted between resolve and consume: the link is no
-        // longer usable and the user row just created must not survive.
-        throw new AppError(404, "INVITE_INVALID", "Este link de invitación no es válido o ya no está disponible.");
-      }
+        if (!consumed) {
+          // Revoked or exhausted between resolve and consume: the link is no
+          // longer usable and the user row just created must not survive.
+          throw new AppError(404, "INVITE_INVALID", "Este enlace de invitación no es válido o ya no está disponible.");
+        }
     }
 
     // --- obligation, only when a cycle is already open -----------------------

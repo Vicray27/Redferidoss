@@ -234,14 +234,14 @@ export function PaymentForm({
 
           <div className="space-y-1">
             <Label htmlFor="pay-reference">
-              Referencia
+              Referencia del pago
               {selectedMethod?.requiresReference ? " (obligatoria para este método)" : " (opcional)"}
             </Label>
             <Input
               id="pay-reference"
               value={reference}
               onChange={(event) => setReference(event.target.value)}
-              placeholder="Número de referencia o hash de la transacción"
+              placeholder="Número de referencia o código de la transacción."
             />
           </div>
 

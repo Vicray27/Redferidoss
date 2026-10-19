@@ -98,7 +98,7 @@ export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
               <th className="px-4 py-3 font-medium">Método</th>
               <th className="px-4 py-3 font-medium">Referencia</th>
               <th className="px-4 py-3 font-medium">Comprobante</th>
-              <th className="px-4 py-3 font-medium">Reportado</th>
+              <th className="px-4 py-3 font-medium">Fecha de reporte</th>
               <th className="px-4 py-3 font-medium">Acciones</th>
             </tr>
           </thead>
@@ -142,7 +142,7 @@ export function ReviewClient({ rows }: { rows: ReviewRow[] }) {
                       rel="noreferrer"
                       className="underline"
                     >
-                      Ver
+                      Ver comprobante
                     </a>
                   ) : (
                     "—"

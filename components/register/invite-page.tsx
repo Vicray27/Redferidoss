@@ -37,7 +37,7 @@ export async function InvitePage({ slug }: { slug: string }) {
     return (
       <InviteError
         title="Sin cupos disponibles"
-        description={`${resolution.sponsor.fullName} ya no tiene cupos de referido disponibles. Pídele que libere o amplíe su cupo y vuelve a intentar con este mismo link.`}
+        description={`${resolution.sponsor.fullName} ya no tiene cupos de referido disponibles. Pídele que libere o amplíe su cupo y vuelve a intentar con este mismo enlace.`}
       />
     );
   }
@@ -53,7 +53,7 @@ export async function InvitePage({ slug }: { slug: string }) {
           <h1 className="text-2xl font-bold tracking-tight">Red de Referidos</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Registro por invitación
-            {resolution.kind === "SINGLE" ? " (link de un solo uso)" : ""}.
+            {resolution.kind === "SINGLE" ? " (enlace de un solo uso)" : ""}.
           </p>
         </div>
 
@@ -76,7 +76,7 @@ function InviteError({ title, description }: { title: string; description: strin
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         <p className="text-sm text-muted-foreground">{description}</p>
         <p className="text-sm">
-          Si crees que es un error, pide a tu patrocinador un link nuevo.{" "}
+          Si crees que es un error, pide a tu patrocinador un enlace nuevo.{" "}
           <a className="underline" href="/login">
             ¿Ya tienes cuenta? Inicia sesión
           </a>

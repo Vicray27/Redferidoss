@@ -52,7 +52,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
     <SessionShell
       session={session}
       title="Panel de administración"
-      description="Todos los aportes de la red: métricas de la semana, gráficas y accesos a la tabla maestra y al cumplimiento. Solo staff."
+      description="Todos los aportes de la red: métricas de la semana, gráficas y accesos a la tabla maestra y al cumplimiento. Solo personal autorizado."
     >
       {overview === null ? (
         <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
@@ -119,7 +119,7 @@ function Overview({
           </select>
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">Ventana</span>
+          <span className="mb-1 block text-xs font-medium text-muted-foreground">Periodo</span>
           <select
             name="semanas"
             defaultValue={String(weeks)}
@@ -131,13 +131,13 @@ function Overview({
           </select>
         </label>
         <Button type="submit" variant="outline">
-          Ver
+          Aplicar filtros
         </Button>
       </form>
 
       <section aria-label="Indicadores de la semana" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Total recaudado" value={`${kpis.collectedTotal} ${currency}`} />
-        <Stat label="Ticket promedio" value={`${kpis.averageTicket} ${currency}`} />
+        <Stat label="Aporte promedio" value={`${kpis.averageTicket} ${currency}`} />
         <Stat
           label="Cumplimiento"
           value={`${(kpis.complianceRate * 100).toFixed(1)} %`}
@@ -181,12 +181,12 @@ function Overview({
         />
       </ChartSection>
 
-      <ChartSection title="Reportes vs. obligaciones por semana">
+      <ChartSection title="Aportes frente a obligaciones por semana">
         <LineChart
           labels={weeklyLabels}
           series={[
             {
-              name: "Reportes",
+              name: "Aportes",
               color: "primary",
               values: weeklySeries.map((point) => point.reportsCount),
             },
@@ -196,7 +196,7 @@ function Overview({
               values: weeklySeries.map((point) => point.obligationsCount),
             },
           ]}
-          ariaLabel="Cantidad de reportes y obligaciones por semana"
+          ariaLabel="Cantidad de aportes y obligaciones por semana"
         />
       </ChartSection>
 
@@ -217,7 +217,7 @@ function Overview({
       </ChartSection>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <ChartSection title="Top 10 contribuyentes de la semana">
+        <ChartSection title="10 personas con más aportes de la semana">
           <HorizontalBarChart
             rows={topContributors.map((person) => {
               const value = cents(person.total);
@@ -233,7 +233,7 @@ function Overview({
           />
         </ChartSection>
 
-        <ChartSection title="Top 10 patrocinadores por red">
+        <ChartSection title="10 patrocinadores con mayor aporte de su red">
           <HorizontalBarChart
             rows={topSponsors.map((person) => {
               const value = cents(person.total);

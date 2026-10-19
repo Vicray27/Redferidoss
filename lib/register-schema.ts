@@ -48,10 +48,10 @@ export function createRegisterCoreSchema(
 
   return z.object({
     invite: z
-      .string({ error: "Falta el link de invitación" })
+      .string({ error: "Falta el enlace de invitación" })
       .trim()
-      .min(1, "Falta el link de invitación")
-      .max(128, "El link de invitación no es válido"),
+      .min(1, "Falta el enlace de invitación")
+      .max(128, "El enlace de invitación no es válido"),
 
     email: z
       .string({ error: "El correo es obligatorio" })

@@ -3,12 +3,14 @@
 // =============================================================================
 // app/admin/configuracion/settings-form.tsx — one form for the whole catalog.
 //
-// Only DIRTY entries are sent. BOOL travels as boolean; JSON is parsed here so
-// a syntax error gets an inline message instead of a server round-trip;
-// everything else travels as the typed string, because
-// `validateSettingValue` (lib/settings-admin.ts) accepts numeric strings and
-// canonicalises DECIMAL itself. Fields above the current role's rank are
-// disabled — the service enforces `editable_by` regardless.
+// Tabs group the catalog but do not split the form state: every value lives in
+// the same `values` map, so switching tabs never discards an edit. Only DIRTY
+// entries are sent. BOOL travels as boolean; JSON is parsed here so a syntax
+// error gets an inline message instead of a server round-trip; everything else
+// travels as the typed string, because `validateSettingValue`
+// (lib/settings-admin.ts) accepts numeric strings and canonicalises DECIMAL
+// itself. Fields above the current role's rank are disabled — the service
+// enforces `editable_by` regardless.
 // =============================================================================
 
 import { useState, useTransition } from "react";
@@ -18,13 +20,18 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
   Input,
   Label,
 } from "@/components/ui/form";
+import { Tabs, TabsPanel } from "@/components/ui/tabs";
 import { updateSettingsAction } from "@/lib/settings-actions";
+import {
+  ROLE_LABELS,
+  SETTINGS_GROUP_LABELS,
+  settingOptionLabel,
+} from "@/lib/ui-labels";
 
 export interface SettingsEntryView {
   key: string;
@@ -46,6 +53,63 @@ export interface SettingsGroupView {
 
 const ROLE_RANK: Record<string, number> = { MEMBER: 0, ADMIN: 1, ROOT: 2 };
 
+/** Tab order for the settings screen. Keys/group names stay untouched. */
+const GROUP_ORDER = ["general", "referral", "payments", "visibility", "security"];
+
+const REMINDER_DAYS_KEY = "payments.reminder_days_before_due";
+
+const DAYS_ERROR =
+  "Revisa los días de aviso: usa números enteros entre 0 y 30, separados por comas.";
+
+function daysTextToArray(text: string): number[] | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return [];
+
+  const days: number[] = [];
+  for (const part of trimmed.split(",")) {
+    const chunk = part.trim();
+    if (!/^\d+$/.test(chunk)) return null;
+    const day = Number(chunk);
+    if (!Number.isInteger(day) || day < 0 || day > 30) return null;
+    days.push(day);
+  }
+  return days;
+}
+
+/** Stored JSON text (`[1,3]`) -> friendly input text (`1, 3`). */
+function storedDaysText(value: string | boolean): string {
+  if (typeof value !== "string") return "";
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is number => typeof item === "number").join(", ");
+    }
+  } catch {
+    // Not valid JSON: keep the raw text so the user can see and fix it.
+  }
+  return value;
+}
+
+function initialFieldValue(entry: SettingsEntryView): string | boolean {
+  if (entry.key === REMINDER_DAYS_KEY) return storedDaysText(entry.value);
+  return entry.value;
+}
+
+function isDirty(entry: SettingsEntryView, value: string | boolean): boolean {
+  if (entry.key === REMINDER_DAYS_KEY) {
+    const current = daysTextToArray(typeof value === "string" ? value : "");
+    const stored = daysTextToArray(storedDaysText(entry.value));
+    if (current === null || stored === null) return true;
+    return current.join(",") !== stored.join(",");
+  }
+  return value !== entry.value;
+}
+
+function groupRank(name: string): number {
+  const index = GROUP_ORDER.indexOf(name);
+  return index === -1 ? GROUP_ORDER.length : index;
+}
+
 export function SettingsForm({
   groups,
   currentRole,
@@ -56,17 +120,32 @@ export function SettingsForm({
   const router = useRouter();
   const [busy, startTransition] = useTransition();
 
+  const orderedGroups = [...groups].sort(
+    (left, right) => groupRank(left.name) - groupRank(right.name),
+  );
+
   const [values, setValues] = useState<Record<string, string | boolean>>(() => {
     const initial: Record<string, string | boolean> = {};
     for (const group of groups) {
-      for (const entry of group.entries) initial[entry.key] = entry.value;
+      for (const entry of group.entries) initial[entry.key] = initialFieldValue(entry);
     }
     return initial;
   });
+  const [activeTab, setActiveTab] = useState(() => orderedGroups[0]?.name ?? "general");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   const allEntries = groups.flatMap((group) => group.entries);
-  const dirtyEntries = allEntries.filter((entry) => values[entry.key] !== entry.value);
+  const dirtyEntries = allEntries.filter((entry) =>
+    isDirty(entry, values[entry.key] ?? entry.value),
+  );
+
+  const groupForEntry = (key: string) =>
+    groups.find((group) => group.entries.some((entry) => entry.key === key));
+
+  const focusGroupForEntry = (key: string) => {
+    const group = groupForEntry(key);
+    if (group) setActiveTab(group.name);
+  };
 
   const setValue = (key: string, value: string | boolean) => {
     setValues((current) => ({ ...current, [key]: value }));
@@ -89,15 +168,24 @@ export function SettingsForm({
 
       const text = typeof raw === "string" ? raw : "";
 
+      if (entry.key === REMINDER_DAYS_KEY) {
+        const days = daysTextToArray(text);
+        if (days === null) {
+          setMessage({ kind: "error", text: DAYS_ERROR });
+          focusGroupForEntry(entry.key);
+          return;
+        }
+        changes.push({ key: entry.key, value: days });
+        continue;
+      }
+
       if (entry.type === "JSON") {
         let parsed: unknown;
         try {
           parsed = JSON.parse(text);
         } catch {
-          setMessage({
-            kind: "error",
-            text: `"${entry.label}" no tiene un JSON válido.`,
-          });
+          setMessage({ kind: "error", text: "Revisa el formato de la lista." });
+          focusGroupForEntry(entry.key);
           return;
         }
         changes.push({ key: entry.key, value: parsed });
@@ -111,10 +199,13 @@ export function SettingsForm({
       const result = await updateSettingsAction(changes);
 
       if (!result.ok) {
-        setMessage({
-          kind: "error",
-          text: result.message ?? "No se pudieron guardar los ajustes.",
-        });
+        const text = result.message ?? "No se pudieron guardar los ajustes.";
+        setMessage({ kind: "error", text });
+        // The action returns a message, not structured field errors. If the
+        // message names one of the dirty fields, open the tab that owns it so
+        // the user does not have to hunt across five tabs.
+        const failed = dirtyEntries.find((entry) => text.includes(entry.label));
+        if (failed) focusGroupForEntry(failed.key);
         return;
       }
 
@@ -125,6 +216,14 @@ export function SettingsForm({
       router.refresh();
     });
   };
+
+  const tabItems = orderedGroups.map((group) => ({
+    id: group.name,
+    label: SETTINGS_GROUP_LABELS[group.name] ?? group.name,
+    badge: group.entries.filter((entry) =>
+      isDirty(entry, values[entry.key] ?? entry.value),
+    ).length,
+  }));
 
   return (
     <div className="space-y-6">
@@ -137,37 +236,49 @@ export function SettingsForm({
         </p>
       ) : null}
 
-      {groups.map((group) => (
-        <Card key={group.name}>
-          <CardHeader>
-            <CardTitle className="text-lg">{group.name}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {group.entries.map((entry) => {
-              const canEdit = (ROLE_RANK[currentRole] ?? 0) >= (ROLE_RANK[entry.editableBy] ?? 0);
-              return (
-                <div key={entry.key} className="space-y-1">
-                  <Label htmlFor={`setting-${entry.key}`}>{entry.label}</Label>
-                  <p className="text-xs text-muted-foreground">{entry.description}</p>
-                  <SettingField
-                    entry={entry}
-                    value={values[entry.key] ?? entry.value}
-                    disabled={!canEdit}
-                    onChange={(value) => setValue(entry.key, value)}
-                  />
-                  {!canEdit ? (
-                    <p className="text-xs text-muted-foreground">
-                      Requiere rol {entry.editableBy}.
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      ))}
+      <Tabs
+        items={tabItems}
+        value={activeTab}
+        onValueChange={setActiveTab}
+        label="Grupos de configuración"
+      >
+        {orderedGroups.map((group) => (
+          <TabsPanel key={group.name} id={group.name}>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">
+                  {SETTINGS_GROUP_LABELS[group.name] ?? group.name}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {group.entries.map((entry) => {
+                  const canEdit =
+                    (ROLE_RANK[currentRole] ?? 0) >= (ROLE_RANK[entry.editableBy] ?? 0);
+                  return (
+                    <div key={entry.key} className="space-y-1">
+                      <Label htmlFor={`setting-${entry.key}`}>{entry.label}</Label>
+                      <p className="text-xs text-muted-foreground">{entry.description}</p>
+                      <SettingField
+                        entry={entry}
+                        value={values[entry.key] ?? entry.value}
+                        disabled={!canEdit}
+                        onChange={(value) => setValue(entry.key, value)}
+                      />
+                      {!canEdit ? (
+                        <p className="text-xs text-muted-foreground">
+                          Requiere rol {ROLE_LABELS[entry.editableBy] ?? entry.editableBy}.
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          </TabsPanel>
+        ))}
+      </Tabs>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Button type="button" onClick={onSave} disabled={busy || dirtyEntries.length === 0}>
           {busy ? "Guardando…" : "Guardar cambios"}
         </Button>
@@ -219,12 +330,34 @@ function SettingField({
         onChange={(event) => onChange(event.target.value)}
         className="flex h-10 w-full max-w-sm rounded-md border border-input bg-background px-3 py-2 text-sm"
       >
-        {(entry.options ?? []).map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
+        {(entry.options ?? []).map((option) => {
+          const unavailable = entry.key === "general.locale" && option === "en";
+          return (
+            <option key={option} value={option} disabled={unavailable}>
+              {unavailable ? "Inglés (no disponible todavía)" : settingOptionLabel(option)}
+            </option>
+          );
+        })}
       </select>
+    );
+  }
+
+  if (entry.key === REMINDER_DAYS_KEY) {
+    return (
+      <div className="space-y-1">
+        <Input
+          id={id}
+          type="text"
+          disabled={disabled}
+          value={typeof value === "string" ? value : ""}
+          placeholder="1, 3"
+          onChange={(event) => onChange(event.target.value)}
+          className="max-w-sm"
+        />
+        <p className="text-xs text-muted-foreground">
+          Separa los días con comas. Déjalo vacío para no enviar avisos.
+        </p>
+      </div>
     );
   }
 

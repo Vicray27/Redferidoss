@@ -85,15 +85,15 @@ describe("register schema — fixed fields", () => {
 
   it("requires a non-empty invite link", () => {
     const missing = registerCoreSchema.safeParse(validInput({ invite: undefined }));
-    expect(firstMessage(missing)).toBe("Falta el link de invitación");
+    expect(firstMessage(missing)).toBe("Falta el enlace de invitación");
 
     const blank = registerCoreSchema.safeParse(validInput({ invite: "   " }));
-    expect(firstMessage(blank)).toBe("Falta el link de invitación");
+    expect(firstMessage(blank)).toBe("Falta el enlace de invitación");
   });
 
   it("rejects an invite link longer than 128 characters", () => {
     const result = registerCoreSchema.safeParse(validInput({ invite: "x".repeat(129) }));
-    expect(firstMessage(result)).toBe("El link de invitación no es válido");
+    expect(firstMessage(result)).toBe("El enlace de invitación no es válido");
   });
 
   it("rejects invalid email with the example message", () => {

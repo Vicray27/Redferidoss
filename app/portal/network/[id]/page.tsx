@@ -28,6 +28,7 @@ import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
 import { createNetworkService } from "@/lib/network";
 import { settings } from "@/lib/settings";
+import { USER_STATUS_LABELS } from "@/lib/ui-labels";
 
 export const dynamic = "force-dynamic";
 
@@ -101,7 +102,7 @@ export default async function NetworkNodePage({
 
       <dl className="grid gap-4 sm:grid-cols-3">
         <Fact label="Código público" value={detail.publicCode} mono />
-        <Fact label="Estado" value={detail.status} />
+        <Fact label="Estado de la cuenta" value={USER_STATUS_LABELS[detail.status] ?? detail.status} />
         <Fact label="Nivel" value={String(detail.depth)} />
         <Fact label="Registro" value={joined} />
         {showsSubtree ? (
@@ -155,11 +156,11 @@ export default async function NetworkNodePage({
       {showsSubtree ? (
         <section className="space-y-3 rounded-lg border bg-background p-4">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Su link de red
+            Su enlace de red
           </h2>
           <LinkBox
             path={`/r/${detail.publicCode}`}
-            note={`Este es el link con el que ${detail.fullName} invita a sus propios referidos.`}
+            note={`Este es el enlace con el que ${detail.fullName} invita a sus propios referidos.`}
           />
         </section>
       ) : null}
@@ -178,7 +179,7 @@ export default async function NetworkNodePage({
 
       {showsSubtree ? (
         <p className="text-xs text-muted-foreground">
-          El historial de pagos de esta persona llegará con la fase de pagos.
+          El historial de aportes de esta persona estará disponible próximamente.
         </p>
       ) : null}
     </SessionShell>

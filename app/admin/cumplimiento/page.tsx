@@ -64,7 +64,7 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
     <SessionShell
       session={session}
       title="Cumplimiento"
-      description="La matriz persona × semana: quién aprobó, quién debe y quién no tenía obligación. Solo staff."
+      description="La matriz persona × semana: quién aprobó, quién debe y quién no tenía obligación. Solo personal autorizado."
     >
       {matrix === null ? (
         <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
@@ -117,7 +117,7 @@ function MatrixView({
           </select>
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">Ventana</span>
+          <span className="mb-1 block text-xs font-medium text-muted-foreground">Periodo</span>
           <select
             name="semanas"
             defaultValue={String(weeks)}
@@ -129,7 +129,7 @@ function MatrixView({
           </select>
         </label>
         <Button type="submit" variant="outline">
-          Ver
+          Aplicar filtros
         </Button>
       </form>
 
@@ -144,7 +144,7 @@ function MatrixView({
             {COMPLIANCE_STATE_LABELS[state]}
           </span>
         ))}
-        <span>· Cada celda enlaza a la tabla maestra filtrada por esa persona y semana.</span>
+        <span>· Haz clic en una celda para ver el detalle en Pagos.</span>
       </div>
 
       {matrix.truncated ? (

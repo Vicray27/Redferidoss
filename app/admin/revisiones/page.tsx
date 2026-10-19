@@ -50,7 +50,7 @@ export default async function ReviewPage() {
     <SessionShell
       session={session}
       title="Revisión de aportes"
-      description="Aportes pendientes de esta semana. Aprobar cumple la obligación; rechazar pide un motivo."
+      description="Aportes pendientes de revisión. Aprobar cumple la obligación; rechazar pide un motivo."
     >
       {rows.length === 0 ? (
         <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">

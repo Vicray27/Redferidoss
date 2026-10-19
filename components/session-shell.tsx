@@ -20,12 +20,7 @@ import { NotificationBadge } from "@/components/notification-badge";
 import { SidebarNav } from "@/components/sidebar-nav";
 import { Button } from "@/components/ui/button";
 import { logoutAction } from "@/lib/auth/actions";
-
-const ROLE_LABEL: Record<SessionPayload["role"], string> = {
-  ROOT: "Administrador raíz",
-  ADMIN: "Administrador",
-  MEMBER: "Referido",
-};
+import { ROLE_LABELS } from "@/lib/ui-labels";
 
 export function SessionShell({
   session,
@@ -43,7 +38,7 @@ export function SessionShell({
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r bg-background lg:flex">
         <div className="px-4 py-5">
           <p className="text-sm font-semibold tracking-tight">Red de Referidos</p>
-          <p className="mt-1 text-xs text-muted-foreground">{ROLE_LABEL[session.role]}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{ROLE_LABELS[session.role] ?? session.role}</p>
         </div>
 
         <div className="flex-1 overflow-y-auto py-2">
@@ -54,7 +49,7 @@ export function SessionShell({
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">{session.fullName}</p>
             <p className="font-mono text-xs text-muted-foreground">{session.publicCode}</p>
-            <p className="text-xs text-muted-foreground">{ROLE_LABEL[session.role]}</p>
+            <p className="text-xs text-muted-foreground">{ROLE_LABELS[session.role] ?? session.role}</p>
           </div>
 
           <NotificationBadge session={session} />

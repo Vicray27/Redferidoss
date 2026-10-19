@@ -298,7 +298,7 @@ export function CustomFieldsManager({ fields }: { fields: CustomFieldItem[] }) {
   };
 
   const onMove = (field: CustomFieldItem, direction: "up" | "down") => {
-    run(() => moveCustomFieldAction(field.id, direction), "Orden actualizado.");
+    run(() => moveCustomFieldAction(field.id, direction), "Posición actualizada.");
   };
 
   const groups: Array<{ entity: FieldEntity; title: string; description: string }> = [
@@ -310,7 +310,7 @@ export function CustomFieldsManager({ fields }: { fields: CustomFieldItem[] }) {
     {
       entity: "PAYMENT_REPORT",
       title: "Reportes de pago",
-      description: "Campos del aporte semanal. Los que marques «En el panel/exportaciones» aparecen como columnas en la tabla maestra de pagos y en sus exportaciones.",
+      description: "Campos del aporte semanal. Los que marques «En la tabla de pagos y exportaciones» aparecen como columnas en la tabla maestra y en sus exportaciones.",
     },
   ];
 
@@ -329,8 +329,9 @@ export function CustomFieldsManager({ fields }: { fields: CustomFieldItem[] }) {
         <CardHeader>
           <CardTitle className="text-lg">Nuevo campo</CardTitle>
           <CardDescription>
-            El código y el tipo se fijan al crear: identifican al campo en los formularios y en las
-            exportaciones. Para retirar un campo, desactívalo — sus valores históricos se conservan.
+            El código interno y el tipo se fijan al crear: identifican al campo en los formularios y
+            en las exportaciones. Para retirar un campo, desactívalo — sus valores históricos se
+            conservan.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -472,7 +473,7 @@ export function CustomFieldsManager({ fields }: { fields: CustomFieldItem[] }) {
                       <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
                         <p>{describePlacement(field)}</p>
                         <p className="sm:text-right">
-                          Orden: {field.sortOrder}
+                          Posición: {field.sortOrder}
                           {field.options && field.options.length > 0
                             ? ` · Opciones: ${field.options.join(", ")}`
                             : ""}
@@ -497,7 +498,7 @@ function describePlacement(field: CustomFieldItem): string {
   const where: string[] = [];
   if (field.showInRegistration) where.push("En el registro");
   if (field.showInProfile) where.push("En el perfil");
-  if (field.showInDashboard) where.push("En el panel/exportaciones");
+  if (field.showInDashboard) where.push("En la tabla de pagos y exportaciones");
   const visibility =
     field.visibleTo === null
       ? "Sin restricción de visibilidad"
@@ -506,9 +507,9 @@ function describePlacement(field: CustomFieldItem): string {
 }
 
 function visibilityLabel(visibility: FieldVisibility): string {
-  if (visibility === "MEMBER") return "miembros y superior";
-  if (visibility === "ADMIN") return "administración y root";
-  return "solo root";
+  if (visibility === "MEMBER") return "miembros y roles superiores";
+  if (visibility === "ADMIN") return "administración y administrador raíz";
+  return "solo administrador raíz";
 }
 
 function FieldDraftForm({
@@ -533,13 +534,13 @@ function FieldDraftForm({
     <div className="space-y-4">
       {lockIdentity ? (
         <p className="text-xs text-muted-foreground">
-          Código, entidad y tipo quedaron fijos al crear el campo (D56). Para cambiar el tipo,
-          desactiva este campo y crea uno nuevo.
+          El código interno, el uso y el tipo quedaron fijos al crear el campo. Para cambiar el
+          tipo, desactiva este campo y crea uno nuevo.
         </p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-1">
-            <Label htmlFor={`${idPrefix}-entity`}>Entidad</Label>
+            <Label htmlFor={`${idPrefix}-entity`}>Se usa en</Label>
             <select
               id={`${idPrefix}-entity`}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -551,7 +552,7 @@ function FieldDraftForm({
             </select>
           </div>
           <div className="space-y-1">
-            <Label htmlFor={`${idPrefix}-code`}>Código</Label>
+            <Label htmlFor={`${idPrefix}-code`}>Código interno</Label>
             <Input
               id={`${idPrefix}-code`}
               value={values.code}
@@ -581,7 +582,7 @@ function FieldDraftForm({
       )}
 
       <div className="space-y-1">
-        <Label htmlFor={`${idPrefix}-label`}>Etiqueta</Label>
+        <Label htmlFor={`${idPrefix}-label`}>Nombre visible</Label>
         <Input
           id={`${idPrefix}-label`}
           value={values.label}
@@ -610,7 +611,7 @@ function FieldDraftForm({
 
       {PATTERN_TYPES.has(values.type) ? (
         <div className="space-y-1">
-          <Label htmlFor={`${idPrefix}-regex`}>Patrón (opcional)</Label>
+          <Label htmlFor={`${idPrefix}-regex`}>Formato (opcional)</Label>
           <Input
             id={`${idPrefix}-regex`}
             value={values.regex}
@@ -618,6 +619,10 @@ function FieldDraftForm({
             aria-invalid={fieldErrors.regex ? true : undefined}
             onChange={(event) => set("regex", event.target.value)}
           />
+          <p className="text-xs text-muted-foreground">
+            Expresión regular que debe cumplir el valor. Por ejemplo, ^[0-9]&#123;6&#125;$ exige
+            seis dígitos.
+          </p>
           <ErrorText message={fieldErrors.regex} />
         </div>
       ) : null}
@@ -651,7 +656,7 @@ function FieldDraftForm({
 
       {values.type !== "FILE" ? (
         <div className="space-y-1">
-          <Label htmlFor={`${idPrefix}-default`}>Valor sugerido (opcional)</Label>
+          <Label htmlFor={`${idPrefix}-default`}>Valor por defecto (opcional)</Label>
           <Input
             id={`${idPrefix}-default`}
             value={values.defaultValueText}
@@ -660,7 +665,7 @@ function FieldDraftForm({
             onChange={(event) => set("defaultValueText", event.target.value)}
           />
           <p className="text-xs text-muted-foreground">
-            Solo precede el formulario: la persona puede cambiarlo antes de enviar.
+            Solo completa el formulario: la persona puede cambiarlo antes de enviar.
           </p>
           <ErrorText message={fieldErrors.defaultValue} />
         </div>
@@ -676,16 +681,16 @@ function FieldDraftForm({
             onChange={(event) => set("visibleTo", event.target.value as DraftValues["visibleTo"])}
           >
             <option value="">Sin restricción</option>
-            <option value="MEMBER">Miembros y superior</option>
-            <option value="ADMIN">Administración y root</option>
-            <option value="ROOT">Solo root</option>
+            <option value="MEMBER">Miembros y roles superiores</option>
+            <option value="ADMIN">Administración y administrador raíz</option>
+            <option value="ROOT">Solo administrador raíz</option>
           </select>
           <p className="text-xs text-muted-foreground">
-            Rol mínimo que puede ver el campo en las vistas de lectura (D56).
+            Rol mínimo que puede ver el campo en las vistas de lectura.
           </p>
         </div>
         <div className="space-y-1">
-          <Label htmlFor={`${idPrefix}-order`}>Orden</Label>
+          <Label htmlFor={`${idPrefix}-order`}>Posición</Label>
           <Input
             id={`${idPrefix}-order`}
             type="number"
@@ -746,7 +751,7 @@ function FieldDraftForm({
             checked={values.showInDashboard}
             onChange={(event) => set("showInDashboard", event.target.checked)}
           />
-          En el panel/exportaciones
+          En la tabla de pagos y exportaciones
         </label>
         {showActive ? (
           <label className="flex items-center gap-2 text-sm">
@@ -776,7 +781,7 @@ function FieldPreview({ values }: { values: DraftValues }) {
       {values.type === "FILE" ? (
         <p className="text-sm text-muted-foreground">
           Los archivos no se adjuntan en este formulario: los comprobantes llegan con la carga de
-          cada reporte (D25).
+          cada aporte.
         </p>
       ) : (
         <FieldRenderer

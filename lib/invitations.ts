@@ -53,7 +53,7 @@ export const MAX_DEPTH_SETTING = "referral.max_depth";
  * travels in `reason`, for logs and tests only.
  */
 export const INVITE_INVALID_MESSAGE =
-  "Este link de invitación no es válido o ya no está disponible.";
+  "Este enlace de invitación no es válido o ya no está disponible.";
 
 /** Canonical 404 for every unusable link (A2). */
 export class InviteInvalidError extends AppError {

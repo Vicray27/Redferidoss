@@ -3,10 +3,12 @@
 // =============================================================================
 // app/admin/metodos-pago/methods-manager.tsx — the catalog screen.
 //
-// One card creates a method; one row per method edits it in place. The row
-// NEVER shows an input for `code`: it is immutable (D55), so the screen cannot
-// even suggest otherwise. ↑/↓ reorder through the audited service action, and
-// "Desactivar" is the retirement path — there is no delete (D55).
+// Two tabs keep "configured methods" and "new method" from competing for the
+// same vertical space. One card creates a method; one row per method edits it
+// in place. The row NEVER shows an input for `code`: it is immutable (D55), so
+// the screen cannot even suggest otherwise. ↑/↓ reorder through the audited
+// service action, and "Desactivar" is the retirement path — there is no delete
+// (D55).
 // =============================================================================
 
 import { useState, useTransition } from "react";
@@ -22,6 +24,7 @@ import {
   Input,
   Label,
 } from "@/components/ui/form";
+import { Tabs, TabsPanel } from "@/components/ui/tabs";
 import {
   createPaymentMethodAction,
   movePaymentMethodAction,
@@ -65,6 +68,7 @@ export function MethodsManager({ methods }: { methods: PaymentMethodItem[] }) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [activeTab, setActiveTab] = useState("catalog");
 
   const [newMethod, setNewMethod] = useState({
     code: "",
@@ -107,9 +111,18 @@ export function MethodsManager({ methods }: { methods: PaymentMethodItem[] }) {
           requiresProof: newMethod.requiresProof,
         }),
       "Método creado.",
-      // Only clear the form once the server accepted it — an error must not
-      // eat what the admin typed.
-      () => setNewMethod({ code: "", label: "", instructions: "", requiresReference: true, requiresProof: false }),
+      () => {
+        // Only clear the form once the server accepted it — an error must not
+        // eat what the admin typed.
+        setNewMethod({
+          code: "",
+          label: "",
+          instructions: "",
+          requiresReference: true,
+          requiresProof: false,
+        });
+        setActiveTab("catalog");
+      },
     );
   };
 
@@ -137,7 +150,7 @@ export function MethodsManager({ methods }: { methods: PaymentMethodItem[] }) {
   };
 
   const onMove = (method: PaymentMethodItem, direction: "up" | "down") => {
-    run(() => movePaymentMethodAction(method.id, direction), "Orden actualizado.");
+    run(() => movePaymentMethodAction(method.id, direction), "Posición actualizada.");
   };
 
   return (
@@ -151,264 +164,294 @@ export function MethodsManager({ methods }: { methods: PaymentMethodItem[] }) {
         </p>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Nuevo método</CardTitle>
-          <CardDescription>
-            El código se fija al crear y no se puede cambiar: es la clave que usan los reportes
-            históricos. Para retirar un método, desactívalo.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="new-method-code">Código</Label>
-              <Input
-                id="new-method-code"
-                value={newMethod.code}
-                placeholder="NEQUI"
-                aria-invalid={fieldErrors.code ? true : undefined}
-                onChange={(event) => setNewMethod((current) => ({ ...current, code: event.target.value }))}
-              />
-              {fieldErrors.code ? <p className="text-xs text-destructive">{fieldErrors.code}</p> : null}
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="new-method-label">Etiqueta</Label>
-              <Input
-                id="new-method-label"
-                value={newMethod.label}
-                placeholder="Nequi"
-                aria-invalid={fieldErrors.label ? true : undefined}
-                onChange={(event) => setNewMethod((current) => ({ ...current, label: event.target.value }))}
-              />
-              {fieldErrors.label ? <p className="text-xs text-destructive">{fieldErrors.label}</p> : null}
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="new-method-instructions">Instrucciones (opcional)</Label>
-            <textarea
-              id="new-method-instructions"
-              value={newMethod.instructions}
-              rows={3}
-              placeholder="Cómo pagar con este método: pasos, datos de la cuenta…"
-              onChange={(event) => setNewMethod((current) => ({ ...current, instructions: event.target.value }))}
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
-            {fieldErrors.instructions ? (
-              <p className="text-xs text-destructive">{fieldErrors.instructions}</p>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center gap-5">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={newMethod.requiresReference}
-                onChange={(event) =>
-                  setNewMethod((current) => ({ ...current, requiresReference: event.target.checked }))
-                }
-              />
-              Exige referencia
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={newMethod.requiresProof}
-                onChange={(event) =>
-                  setNewMethod((current) => ({ ...current, requiresProof: event.target.checked }))
-                }
-              />
-              Exige comprobante
-            </label>
-            <Button
-              type="button"
-              disabled={busy || newMethod.code.trim() === "" || newMethod.label.trim() === ""}
-              onClick={onCreate}
-            >
-              {busy ? "Guardando…" : "Crear método"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Catálogo ({methods.length})</CardTitle>
-          <CardDescription>
-            El orden define cómo se muestran en el formulario de la semana. Los métodos inactivos
-            se conservan porque los reportes antiguos los referencian.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="divide-y">
-          {methods.map((method, index) => {
-            const editing = editingId === method.id && draft !== null;
-            return (
-              <div key={method.id} className="space-y-3 py-4 first:pt-0 last:pb-0">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md border px-2 font-mono text-xs">
-                      {method.code}
-                    </span>
-                    <span className={`text-sm font-medium ${method.isActive ? "" : "text-muted-foreground line-through"}`}>
-                      {method.label}
-                    </span>
-                    {!method.isActive ? (
-                      <span className="rounded-full border border-dashed px-2 py-0.5 text-xs text-muted-foreground">
-                        Inactivo
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-8 px-3 text-xs"
-                      disabled={busy || index === 0}
-                      aria-label={`Subir ${method.label}`}
-                      onClick={() => onMove(method, "up")}
-                    >
-                      ↑
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-8 px-3 text-xs"
-                      disabled={busy || index === methods.length - 1}
-                      aria-label={`Bajar ${method.label}`}
-                      onClick={() => onMove(method, "down")}
-                    >
-                      ↓
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-8 px-3 text-xs"
-                      disabled={busy}
-                      onClick={() => {
-                        setMessage(null);
-                        setFieldErrors({});
-                        if (editing) {
-                          setEditingId(null);
-                          setDraft(null);
-                        } else {
-                          setEditingId(method.id);
-                          setDraft(draftFrom(method));
-                        }
-                      }}
-                    >
-                      {editing ? "Cancelar" : "Editar"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-8 px-3 text-xs"
-                      disabled={busy}
-                      onClick={() => onToggleActive(method)}
-                    >
-                      {method.isActive ? "Desactivar" : "Activar"}
-                    </Button>
-                  </div>
+      <Tabs
+        items={[
+          { id: "catalog", label: "Métodos configurados" },
+          { id: "new", label: "Nuevo método" },
+        ]}
+        value={activeTab}
+        onValueChange={setActiveTab}
+        label="Métodos de pago"
+      >
+        <TabsPanel id="catalog">
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1.5">
+                  <CardTitle className="text-lg">Métodos configurados ({methods.length})</CardTitle>
+                  <CardDescription>
+                    La posición define cómo se muestran en el formulario de la semana. Los métodos
+                    inactivos no se muestran al reportar, pero se conservan para los aportes
+                    anteriores.
+                  </CardDescription>
                 </div>
-
-                {editing ? (
-                  <div className="space-y-3 rounded-md border border-dashed p-3">
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-1">
-                        <Label htmlFor={`label-${method.id}`}>Etiqueta</Label>
-                        <Input
-                          id={`label-${method.id}`}
-                          value={draft.label}
-                          aria-invalid={fieldErrors.label ? true : undefined}
-                          onChange={(event) => setDraft((current) => (current ? { ...current, label: event.target.value } : current))}
-                        />
-                        {fieldErrors.label ? <p className="text-xs text-destructive">{fieldErrors.label}</p> : null}
-                      </div>
-                      <div className="space-y-1">
-                        <Label htmlFor={`order-${method.id}`}>Orden</Label>
-                        <Input
-                          id={`order-${method.id}`}
-                          type="number"
-                          min={0}
-                          max={9999}
-                          step={1}
-                          inputMode="numeric"
-                          value={draft.sortOrder}
-                          aria-invalid={fieldErrors.sortOrder ? true : undefined}
-                          onChange={(event) =>
-                            setDraft((current) => (current ? { ...current, sortOrder: event.target.value } : current))
-                          }
-                        />
-                        {fieldErrors.sortOrder ? <p className="text-xs text-destructive">{fieldErrors.sortOrder}</p> : null}
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <Label htmlFor={`instructions-${method.id}`}>Instrucciones (opcional)</Label>
-                      <textarea
-                        id={`instructions-${method.id}`}
-                        value={draft.instructions}
-                        rows={3}
-                        onChange={(event) =>
-                          setDraft((current) => (current ? { ...current, instructions: event.target.value } : current))
-                        }
-                        className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      />
-                      {fieldErrors.instructions ? (
-                        <p className="text-xs text-destructive">{fieldErrors.instructions}</p>
-                      ) : null}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-5">
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4"
-                          checked={draft.requiresReference}
-                          onChange={(event) =>
-                            setDraft((current) =>
-                              current ? { ...current, requiresReference: event.target.checked } : current,
-                            )
-                          }
-                        />
-                        Exige referencia
-                      </label>
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4"
-                          checked={draft.requiresProof}
-                          onChange={(event) =>
-                            setDraft((current) =>
-                              current ? { ...current, requiresProof: event.target.checked } : current,
-                            )
-                          }
-                        />
-                        Exige comprobante
-                      </label>
-                      <Button type="button" disabled={busy} onClick={() => onSaveRow(method)}>
-                        {busy ? "Guardando…" : "Guardar"}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                    <p>
-                      Referencia: {method.requiresReference ? "obligatoria" : "no obligatoria"} ·
-                      Comprobante: {method.requiresProof ? "obligatorio" : "no obligatorio"} · Orden:{" "}
-                      {method.sortOrder}
-                    </p>
-                    <p className="sm:text-right">
-                      {method.instructions ? method.instructions : "Sin instrucciones."}
-                    </p>
-                  </div>
-                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setActiveTab("new");
+                    setMessage(null);
+                    setFieldErrors({});
+                  }}
+                >
+                  + Nuevo método
+                </Button>
               </div>
-            );
-          })}
-          {methods.length === 0 ? (
-            <p className="py-4 text-sm text-muted-foreground">Todavía no hay métodos configurados.</p>
-          ) : null}
-        </CardContent>
-      </Card>
+            </CardHeader>
+            <CardContent className="divide-y">
+              {methods.map((method, index) => {
+                const editing = editingId === method.id && draft !== null;
+                return (
+                  <div key={method.id} className="space-y-3 py-4 first:pt-0 last:pb-0">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-md border px-2 font-mono text-xs">
+                          {method.code}
+                        </span>
+                        <span className={`text-sm font-medium ${method.isActive ? "" : "text-muted-foreground line-through"}`}>
+                          {method.label}
+                        </span>
+                        {!method.isActive ? (
+                          <span className="rounded-full border border-dashed px-2 py-0.5 text-xs text-muted-foreground">
+                            Inactivo
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8 px-3 text-xs"
+                          disabled={busy || index === 0}
+                          aria-label={`Subir ${method.label}`}
+                          onClick={() => onMove(method, "up")}
+                        >
+                          ↑
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8 px-3 text-xs"
+                          disabled={busy || index === methods.length - 1}
+                          aria-label={`Bajar ${method.label}`}
+                          onClick={() => onMove(method, "down")}
+                        >
+                          ↓
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8 px-3 text-xs"
+                          disabled={busy}
+                          onClick={() => {
+                            setMessage(null);
+                            setFieldErrors({});
+                            if (editing) {
+                              setEditingId(null);
+                              setDraft(null);
+                            } else {
+                              setEditingId(method.id);
+                              setDraft(draftFrom(method));
+                            }
+                          }}
+                        >
+                          {editing ? "Cancelar" : "Editar"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8 px-3 text-xs"
+                          disabled={busy}
+                          onClick={() => onToggleActive(method)}
+                        >
+                          {method.isActive ? "Desactivar" : "Activar"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {editing ? (
+                      <div className="space-y-3 rounded-md border border-dashed p-3">
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <Label htmlFor={`label-${method.id}`}>Nombre visible</Label>
+                            <Input
+                              id={`label-${method.id}`}
+                              value={draft.label}
+                              aria-invalid={fieldErrors.label ? true : undefined}
+                              onChange={(event) => setDraft((current) => (current ? { ...current, label: event.target.value } : current))}
+                            />
+                            {fieldErrors.label ? <p className="text-xs text-destructive">{fieldErrors.label}</p> : null}
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor={`order-${method.id}`}>Posición</Label>
+                            <Input
+                              id={`order-${method.id}`}
+                              type="number"
+                              min={0}
+                              max={9999}
+                              step={1}
+                              inputMode="numeric"
+                              value={draft.sortOrder}
+                              aria-invalid={fieldErrors.sortOrder ? true : undefined}
+                              onChange={(event) =>
+                                setDraft((current) => (current ? { ...current, sortOrder: event.target.value } : current))
+                              }
+                            />
+                            {fieldErrors.sortOrder ? <p className="text-xs text-destructive">{fieldErrors.sortOrder}</p> : null}
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor={`instructions-${method.id}`}>Instrucciones para aportar</Label>
+                          <textarea
+                            id={`instructions-${method.id}`}
+                            value={draft.instructions}
+                            rows={3}
+                            onChange={(event) =>
+                              setDraft((current) => (current ? { ...current, instructions: event.target.value } : current))
+                            }
+                            className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          />
+                          {fieldErrors.instructions ? (
+                            <p className="text-xs text-destructive">{fieldErrors.instructions}</p>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-5">
+                          <label className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4"
+                              checked={draft.requiresReference}
+                              onChange={(event) =>
+                                setDraft((current) =>
+                                  current ? { ...current, requiresReference: event.target.checked } : current,
+                                )
+                              }
+                            />
+                            Solicitar referencia
+                          </label>
+                          <label className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4"
+                              checked={draft.requiresProof}
+                              onChange={(event) =>
+                                setDraft((current) =>
+                                  current ? { ...current, requiresProof: event.target.checked } : current,
+                                )
+                              }
+                            />
+                            Solicitar comprobante
+                          </label>
+                          <Button type="button" disabled={busy} onClick={() => onSaveRow(method)}>
+                            {busy ? "Guardando…" : "Guardar"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                        <p>
+                          Referencia: {method.requiresReference ? "obligatoria" : "no obligatoria"} ·
+                          Comprobante: {method.requiresProof ? "obligatorio" : "no obligatorio"} · Posición:{" "}
+                          {method.sortOrder}
+                        </p>
+                        <p className="sm:text-right">
+                          {method.instructions ? method.instructions : "Sin instrucciones."}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {methods.length === 0 ? (
+                <p className="py-4 text-sm text-muted-foreground">Todavía no hay métodos configurados.</p>
+              ) : null}
+            </CardContent>
+          </Card>
+        </TabsPanel>
+
+        <TabsPanel id="new">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Nuevo método</CardTitle>
+              <CardDescription>
+                El código interno se fija al crear y no se puede cambiar: identifica al método en
+                los reportes históricos. Para retirar un método, desactívalo.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="new-method-code">Código interno</Label>
+                  <Input
+                    id="new-method-code"
+                    value={newMethod.code}
+                    placeholder="NEQUI"
+                    aria-invalid={fieldErrors.code ? true : undefined}
+                    onChange={(event) => setNewMethod((current) => ({ ...current, code: event.target.value }))}
+                  />
+                  {fieldErrors.code ? <p className="text-xs text-destructive">{fieldErrors.code}</p> : null}
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="new-method-label">Nombre visible</Label>
+                  <Input
+                    id="new-method-label"
+                    value={newMethod.label}
+                    placeholder="Nequi"
+                    aria-invalid={fieldErrors.label ? true : undefined}
+                    onChange={(event) => setNewMethod((current) => ({ ...current, label: event.target.value }))}
+                  />
+                  {fieldErrors.label ? <p className="text-xs text-destructive">{fieldErrors.label}</p> : null}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="new-method-instructions">Instrucciones para aportar</Label>
+                <textarea
+                  id="new-method-instructions"
+                  value={newMethod.instructions}
+                  rows={3}
+                  placeholder="Cómo pagar con este método: pasos, datos de la cuenta…"
+                  onChange={(event) => setNewMethod((current) => ({ ...current, instructions: event.target.value }))}
+                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                />
+                {fieldErrors.instructions ? (
+                  <p className="text-xs text-destructive">{fieldErrors.instructions}</p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-5">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={newMethod.requiresReference}
+                    onChange={(event) =>
+                      setNewMethod((current) => ({ ...current, requiresReference: event.target.checked }))
+                    }
+                  />
+                  Solicitar referencia
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4"
+                    checked={newMethod.requiresProof}
+                    onChange={(event) =>
+                      setNewMethod((current) => ({ ...current, requiresProof: event.target.checked }))
+                    }
+                  />
+                  Solicitar comprobante
+                </label>
+                <Button
+                  type="button"
+                  disabled={busy || newMethod.code.trim() === "" || newMethod.label.trim() === ""}
+                  onClick={onCreate}
+                >
+                  {busy ? "Guardando…" : "Crear método"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsPanel>
+      </Tabs>
     </div>
   );
 }

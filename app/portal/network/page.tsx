@@ -56,7 +56,7 @@ export default async function NetworkPage() {
       </section>
 
       <p className="text-xs text-muted-foreground">
-        La vista de tabla con exportación llega con la siguiente fase.
+        La exportación de tu red estará disponible próximamente.
       </p>
     </SessionShell>
   );

@@ -156,7 +156,7 @@ function validateSortOrder(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   if (!Number.isInteger(numeric) || numeric < 0 || numeric > SORT_ORDER_MAX) {
-    throw invalid("sortOrder", `Usa un número entero entre 0 y ${SORT_ORDER_MAX} para el orden.`);
+    throw invalid("sortOrder", `Usa un número entero entre 0 y ${SORT_ORDER_MAX} para la posición.`);
   }
   return numeric;
 }

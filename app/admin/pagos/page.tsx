@@ -107,7 +107,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
     <SessionShell
       session={session}
       title="Pagos"
-      description="Todos los reportes de pago de la red con doce filtros, acciones en lote y exportación. Solo staff."
+      description="Todos los reportes de pago de la red con doce filtros, acciones en lote y exportación. Solo personal autorizado."
     >
       <div className="space-y-6">
         <div className="flex flex-wrap items-end gap-2">
@@ -149,7 +149,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
               ))}
             </select>
             <span className="mt-1 block text-[10px] text-muted-foreground">
-              Sin selección = todas las semanas. Ctrl/Cmd para elegir varias.
+              Sin selección = todas las semanas. Mantén Ctrl (Windows) o Cmd (Mac) para elegir varias semanas.
             </span>
           </label>
 

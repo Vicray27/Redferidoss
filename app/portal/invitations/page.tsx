@@ -47,7 +47,7 @@ export default async function InvitationsPage() {
     <SessionShell
       session={session}
       title="Invitaciones"
-      description="Tu link de referido, invitaciones de un solo uso y cupos disponibles."
+      description="Tu enlace de referido, invitaciones de un solo uso y cupos disponibles."
     >
       <InvitationsClient
         publicCode={session.publicCode}

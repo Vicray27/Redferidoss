@@ -46,7 +46,7 @@ export function LinkBox({ path, note }: { path: string; note?: string }) {
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          {note ?? "Comparte este link con quien quieras invitar."}
+          {note ?? "Comparte este enlace con quien quieras invitar."}
         </p>
       </div>
     </div>

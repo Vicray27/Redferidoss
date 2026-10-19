@@ -26,7 +26,7 @@ export default async function PaymentMethodsPage() {
     <SessionShell
       session={session}
       title="Métodos de pago"
-      description="Configura cómo aportan las personas: etiquetas, instrucciones, requisitos de referencia y comprobante, orden y disponibilidad. Cada cambio queda auditado."
+      description="Configura cómo aportan las personas: nombres visibles, instrucciones, requisitos de referencia y comprobante, posición y disponibilidad. Cada cambio queda auditado."
     >
       <MethodsManager methods={methods} />
     </SessionShell>

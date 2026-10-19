@@ -72,13 +72,13 @@ export function InvitationsClient({
       setLastCreatedPath(result.link);
       setEmailTarget("");
       setExpiresInHours("");
-      setMessage({ kind: "ok", text: "Invitación de un uso creada. Comparte el link o el QR." });
+      setMessage({ kind: "ok", text: "Invitación de un uso creada. Comparte el enlace o el QR." });
       router.refresh();
     });
   };
 
   const onRevoke = (id: string) => {
-    if (!window.confirm("¿Revocar esta invitación? El link dejará de funcionar.")) return;
+    if (!window.confirm("¿Revocar esta invitación? El enlace dejará de funcionar.")) return;
     setMessage(null);
 
     startTransition(async () => {
@@ -133,7 +133,7 @@ export function InvitationsClient({
 
       <Card>
         <CardHeader>
-          <CardTitle>Mi link permanente</CardTitle>
+          <CardTitle>Mi enlace permanente</CardTitle>
           <CardDescription>
             Cualquier persona que lo use se registra como tu referido directo.
           </CardDescription>
@@ -143,7 +143,7 @@ export function InvitationsClient({
             <LinkBox path={`/r/${publicCode}`} />
           ) : (
             <p className="text-sm text-muted-foreground">
-              El link permanente está desactivado por configuración. Usa invitaciones
+              El enlace permanente está desactivado por configuración. Usa invitaciones
               de un solo uso.
             </p>
           )}

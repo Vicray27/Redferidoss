@@ -46,7 +46,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
     <SessionShell
       session={session}
       title="Reportes"
-      description="Planilla consolidada de la semana: quién reportó, qué pasó y qué se ofrendó. Solo staff."
+      description="Planilla consolidada de la semana: quién reportó, qué pasó y qué se ofrendó. Solo personal autorizado."
     >
       {sheet === null ? (
         <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
@@ -100,7 +100,7 @@ function SheetView({
             </select>
           </label>
           <Button type="submit" variant="outline">
-            Ver
+            Aplicar filtros
           </Button>
         </form>
 

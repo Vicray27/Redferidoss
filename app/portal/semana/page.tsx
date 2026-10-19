@@ -158,7 +158,7 @@ export default async function WeekPage() {
         {cycle && effective ? (
           <>
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Semana {cycle.period_key}
+              {weekRangeLabel(cycle.starts_at, cycle.ends_at)}
             </p>
             <p className="mt-1">
               Del {dayLabel(cycle.starts_at)} al {dayLabel(cycle.ends_at)} ·{" "}
@@ -299,8 +299,37 @@ export default async function WeekPage() {
 
 function statusLabel(status: "OPEN" | "GRACE" | "CLOSED"): string {
   if (status === "OPEN") return "Semana abierta";
-  if (status === "GRACE") return "En gracia";
+  if (status === "GRACE") return "Periodo de gracia";
   return "Cerrada";
+}
+
+const MONTHS_ES = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+];
+
+/** Friendly range: the raw `period_key` is a database key, not UI copy. */
+function weekRangeLabel(start: Date, end: Date): string {
+  const startMonth = MONTHS_ES[start.getMonth()] ?? "";
+  const endMonth = MONTHS_ES[end.getMonth()] ?? "";
+
+  if (start.getFullYear() !== end.getFullYear()) {
+    return `Semana del ${start.getDate()} de ${startMonth} de ${start.getFullYear()} al ${end.getDate()} de ${endMonth} de ${end.getFullYear()}`;
+  }
+  if (start.getMonth() !== end.getMonth()) {
+    return `Semana del ${start.getDate()} de ${startMonth} al ${end.getDate()} de ${endMonth}`;
+  }
+  return `Semana del ${start.getDate()} al ${end.getDate()} de ${startMonth}`;
 }
 
 function daysLeft(dueAt: Date, now: Date): number {

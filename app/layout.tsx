@@ -3,12 +3,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Red de Referidos",
-  description: "Referral network foundation (F1 scaffold).",
+  description: "Administra tu red, tus aportes y tu cumplimiento semanal.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body>{children}</body>
     </html>
   );
