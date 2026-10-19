@@ -193,8 +193,9 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                 <UserPickerField
                   name="subtreeOf"
                   label="Pagos de la red de"
-                  placeholder="Nombre, código o correo…"
+                  placeholder="Nombre, código o correo."
                   initial={subtreeOption}
+                  options={pickerUsers}
                 />
               </div>
             </fieldset>

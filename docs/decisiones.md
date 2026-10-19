@@ -1694,9 +1694,11 @@ resuelve hacia lo más configurable (spec §18.7).
   (checking adds, unchecking removes) and "Quitar todas". The panel lists the
   WHOLE active directory (one `@payadmin:picker-users` read, ~1.9k rows,
   sorted by name) and filters locally as you type, exactly like the weeks
-  control — the first cut kept the server-side search and the owner asked for
-  the visible list instead. The `/api/payments/users` endpoint stays for the
-  single picker ("Pagos de la red de"), which still searches server-side.
+  control — the first cut kept a server-side search and the owner asked for
+  the visible options instead. The single picker ("Pagos de la red de") uses
+  the same directory with a select2-style list: an input that opens the
+  options on focus and narrows them as you type, one click to pick. The
+  `/api/payments/users` endpoint remains as an API but no UI calls it now.
   Chips remain under the button so the chosen people stay visible with the
   panel closed.
 - Files: `app/admin/pagos/user-picker.tsx`, `app/admin/pagos/page.tsx`,
@@ -1704,8 +1706,8 @@ resuelve hacia lo más configurable (spec §18.7).
   `tests/payments-admin.test.ts`.
 - Consequences: the wire format is untouched (one hidden input per selected
   person, repeated `userId` params). `/admin/pagos` now ships the directory
-  with the page (force-dynamic, staff-only) and the local filter matches
-  name, code and email. `e2e/admin-pages.spec.ts` only pins the weeks legend,
+  with the page (force-dynamic, staff-only) and both fields filter locally
+  on name, code and email. `e2e/admin-pages.spec.ts` only pins the weeks legend,
   so it is unaffected. The new pure helpers (`userPickerSummary`,
   `toggleUserSelection`, `filterUserOptions`) carry the rules and are
   unit-tested.

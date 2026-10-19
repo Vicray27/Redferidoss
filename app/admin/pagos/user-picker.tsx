@@ -1,24 +1,20 @@
 "use client";
 
 // =============================================================================
-// app/admin/pagos/user-picker.tsx — autocomplete for filters #4 (persona) and
-// #5 (red de): type a name/code/email, submit-to-search, pick a result.
+// app/admin/pagos/user-picker.tsx — select2-style pickers for filters #4
+// (persona, multiple) and #5 (red de, single).
 //
-// Submit-to-search on purpose (same doctrine as components/network): typing
-// does not query, so a 20-keystroke name is one request, not twenty. The pick
-// writes a hidden input with the user id, so the surrounding GET form submits
-// `userId=<uuid>` like any other filter — in multiple mode it writes ONE hidden
-// input PER selected person (repeated params, D79), and the page reads them
-// back as a deduped list. In multiple mode the control also follows the D79
-// weeks envelope (D82): a summary button, a panel that lists the whole active
-// directory at once and filters it locally as you type, checkbox results and
-// "Quitar todas". The server re-validates every uuid anyway.
+// Both controls list the whole active directory, loaded once with the page
+// (D82), and filter it locally as you type: typing narrows the options, never
+// the server, so the wire protocol stays the usual GET params. Each pick
+// writes a hidden input with the user id — in multiple mode ONE hidden input
+// PER selected person (repeated params, D79), and the page reads them back as
+// a deduped list. Multiple mode also follows the D79 weeks envelope: a
+// summary button, a panel with the search box, checkbox results and "Quitar
+// todas". The server re-validates every uuid anyway.
 // =============================================================================
 
 import { useEffect, useId, useRef, useState } from "react";
-
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/form";
 
 export interface UserPickerOption {
   id: string;
@@ -26,16 +22,6 @@ export interface UserPickerOption {
   publicCode: string;
   /** Matched by the local filter, never displayed. */
   email?: string | null;
-}
-
-async function fetchUsers(term: string): Promise<UserPickerOption[]> {
-  const response = await fetch(`/api/payments/users?q=${encodeURIComponent(term)}`);
-  const envelope = (await response.json()) as
-    | { ok: true; data: { results: UserPickerOption[] } }
-    | { ok: false; error?: { message?: string } };
-
-  if (!envelope.ok) throw new Error(envelope.error?.message ?? "No se pudo buscar.");
-  return envelope.data.results;
 }
 
 /**
@@ -89,6 +75,8 @@ export interface SingleUserPickerProps extends UserPickerBaseProps {
   multiple?: false;
   /** Current selection resolved server-side. */
   initial: UserPickerOption | null;
+  /** The whole active directory, loaded with the page (D82). */
+  options: readonly UserPickerOption[];
 }
 
 export interface MultipleUserPickerProps extends UserPickerBaseProps {
@@ -109,36 +97,53 @@ export function UserPickerField(props: SingleUserPickerProps | MultipleUserPicke
   );
 }
 
-function SingleUserPicker({ name, label, placeholder, initial }: SingleUserPickerProps) {
+function SingleUserPicker({
+  name,
+  label,
+  placeholder,
+  initial,
+  options,
+}: SingleUserPickerProps) {
   const [term, setTerm] = useState("");
   const [selected, setSelected] = useState<UserPickerOption | null>(initial);
-  const [results, setResults] = useState<UserPickerOption[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const listId = useId();
 
-  const search = async () => {
-    setError(null);
-    setLoading(true);
-
-    try {
-      setResults(await fetchUsers(term));
-    } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : "No se pudo buscar.");
-      setResults(null);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (rootRef.current !== null && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   const clear = () => {
     setSelected(null);
-    setResults(null);
-    setError(null);
+    setOpen(false);
     setTerm("");
   };
 
+  const choose = (option: UserPickerOption) => {
+    setSelected(option);
+    setOpen(false);
+    setTerm("");
+  };
+
+  const visible = filterUserOptions(options, term);
+
   return (
-    <div className="text-sm">
+    <div ref={rootRef} className="relative text-sm">
       <span className="mb-1 block text-xs font-medium text-muted-foreground">{label}</span>
       {/* The filter the form actually submits; the widgets around it are UI. */}
       <input type="hidden" name={name} value={selected?.id ?? ""} />
@@ -158,55 +163,55 @@ function SingleUserPicker({ name, label, placeholder, initial }: SingleUserPicke
           </button>
         </div>
       ) : (
-        <div className="flex gap-2">
-          <Input
-            value={term}
-            onChange={(event) => setTerm(event.target.value)}
-            onKeyDown={(event) => {
-              // Enter inside the filter form would submit the whole form; here
-              // it means "search", which is why this handler exists.
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void search();
-              }
-            }}
-            placeholder={placeholder}
-            aria-label={label}
-          />
-          <Button type="button" variant="outline" onClick={() => void search()} disabled={loading}>
-            {loading ? "…" : "Buscar"}
-          </Button>
-        </div>
+        <input
+          type="text"
+          value={term}
+          onChange={(event) => {
+            setTerm(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(event) => {
+            // Enter inside the filter form would submit the whole form; here
+            // it only narrows the local list, never the applied filters.
+            if (event.key === "Enter") event.preventDefault();
+          }}
+          placeholder={placeholder}
+          aria-label={label}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls={listId}
+          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        />
       )}
 
-      {error ? (
-        <p role="alert" className="mt-1 text-xs text-destructive">
-          {error}
-        </p>
-      ) : null}
-
-      {!selected && results !== null ? (
-        results.length === 0 ? (
-          <p className="mt-1 text-xs text-muted-foreground">Sin resultados.</p>
-        ) : (
-          <ul className="mt-1 divide-y rounded-md border bg-background">
-            {results.map((option) => (
-              <li key={option.id}>
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-muted/50"
-                  onClick={() => {
-                    setSelected(option);
-                    setResults(null);
-                  }}
-                >
-                  <span className="min-w-0 truncate">{option.fullName}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{option.publicCode}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )
+      {open && !selected ? (
+        <div
+          id={listId}
+          className="absolute z-20 mt-1 w-full rounded-md border bg-background p-1 shadow-md"
+        >
+          {visible.length === 0 ? (
+            <p className="px-2 py-2 text-xs text-muted-foreground">Sin resultados.</p>
+          ) : (
+            <ul className="max-h-64 divide-y overflow-y-auto">
+              {visible.map((option) => (
+                <li key={option.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-2 px-2 py-2 text-left hover:bg-muted/50"
+                    onClick={() => choose(option)}
+                  >
+                    <span className="min-w-0 truncate">{option.fullName}</span>
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                      {option.publicCode}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       ) : null}
     </div>
   );
@@ -307,6 +312,7 @@ function MultipleUserPicker({
           <input
             type="text"
             value={term}
+            autoFocus
             onChange={(event) => setTerm(event.target.value)}
             onKeyDown={(event) => {
               // Enter inside the filter form would submit the whole form; here
