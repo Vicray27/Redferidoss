@@ -61,8 +61,11 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
     customFieldCodes: customFields.map((field) => field.code),
   });
 
-  const [page, userOptions, subtreeOption] = await Promise.all([
+  const [page, pickerUsers, userOptions, subtreeOption] = await Promise.all([
     admin.listPayments(session, filters),
+    // The person filter's panel lists the whole active directory and filters
+    // locally (D82), so the directory ships with the page.
+    admin.listPickerUsers(session),
     // One lookup per repeated `userId` param; unknown ids come back null and
     // are simply not rendered as chips (the SQL filter still applies to them).
     Promise.all(filters.userIds.map((id) => dashboard.userOption(session, id))),
@@ -181,9 +184,10 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
                 <UserPickerField
                   name="userId"
                   label="Persona exacta"
-                  placeholder="Nombre, código o correo…"
+                  placeholder="Nombre, código o correo."
                   multiple
                   initialSelected={initialUserOptions}
+                  options={pickerUsers}
                 />
 
                 <UserPickerField

@@ -1691,15 +1691,22 @@ resuelve hacia lo más configurable (spec §18.7).
   a summary button ("Todas las personas" / the person's name / "N personas
   seleccionadas"), a panel that closes on outside click and Escape, the search
   box inside the panel, a checkbox result list that toggles selection
-  (checking adds, unchecking removes) and "Quitar todas". Search stays
-  server-side (submit-to-search) because the directory has thousands of users:
-  only the control envelope matches the weeks control, not the filtering
-  mechanics. Chips remain under the button so the chosen people stay visible
-  with the panel closed. The single picker ("Pagos de la red de") is unchanged.
-- Files: `app/admin/pagos/user-picker.tsx`, `tests/user-picker.test.ts` (new).
+  (checking adds, unchecking removes) and "Quitar todas". The panel lists the
+  WHOLE active directory (one `@payadmin:picker-users` read, ~1.9k rows,
+  sorted by name) and filters locally as you type, exactly like the weeks
+  control — the first cut kept the server-side search and the owner asked for
+  the visible list instead. The `/api/payments/users` endpoint stays for the
+  single picker ("Pagos de la red de"), which still searches server-side.
+  Chips remain under the button so the chosen people stay visible with the
+  panel closed.
+- Files: `app/admin/pagos/user-picker.tsx`, `app/admin/pagos/page.tsx`,
+  `lib/payments-admin.ts`, `tests/user-picker.test.ts` (new),
+  `tests/payments-admin.test.ts`.
 - Consequences: the wire format is untouched (one hidden input per selected
-  person, repeated `userId` params). `e2e/admin-pages.spec.ts` only pins the
-  weeks legend, so it is unaffected. The new pure helpers
-  (`userPickerSummary`, `toggleUserSelection`) carry the rules and are
+  person, repeated `userId` params). `/admin/pagos` now ships the directory
+  with the page (force-dynamic, staff-only) and the local filter matches
+  name, code and email. `e2e/admin-pages.spec.ts` only pins the weeks legend,
+  so it is unaffected. The new pure helpers (`userPickerSummary`,
+  `toggleUserSelection`, `filterUserOptions`) carry the rules and are
   unit-tested.
 

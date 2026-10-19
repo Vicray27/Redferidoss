@@ -289,6 +289,36 @@ describe("parsePaymentsFilters", () => {
 
 // --- service -----------------------------------------------------------------
 
+describe("listPickerUsers", () => {
+  it("refuses a MEMBER before any SQL runs", async () => {
+    const fake = new PaymentsAdminFake();
+    const { authz } = makeAuthz();
+    const service = createPaymentsAdminService(fake, authz);
+
+    await expect(service.listPickerUsers(MEMBER)).rejects.toBeInstanceOf(ForbiddenError);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("returns the whole active directory with no bound filters", async () => {
+    const directory = [
+      { id: U1, fullName: "Ana Pérez", publicCode: "REF-001", email: null },
+      { id: U2, fullName: "Beto Gómez", publicCode: "REF-002", email: "beto@example.org" },
+    ];
+    const fake = new PaymentsAdminFake().on("picker-users", () => directory);
+    const { authz, scopeCalls } = makeAuthz();
+    const service = createPaymentsAdminService(fake, authz);
+
+    const users = await service.listPickerUsers(STAFF);
+
+    expect(users).toEqual(directory);
+    // `deleted_at IS NULL` is SQL text: nothing is bound as a parameter.
+    expect(fake.valuesOf("picker-users")).toEqual([]);
+    // Staff-only directory read (same doctrine as dashboard.searchUsers): the
+    // scoping fragment is not applied here.
+    expect(scopeCalls).toHaveLength(0);
+  });
+});
+
 describe("listPayments", () => {
   it("refuses a MEMBER before any SQL runs", async () => {
     const fake = withRows([row()]);

@@ -10,10 +10,9 @@
 // `userId=<uuid>` like any other filter — in multiple mode it writes ONE hidden
 // input PER selected person (repeated params, D79), and the page reads them
 // back as a deduped list. In multiple mode the control also follows the D79
-// weeks envelope (D82): a summary button, a panel with the search box,
-// checkbox results and "Quitar todas"; only the search stays server-side,
-// because the directory has thousands of users. The server re-validates every
-// uuid anyway.
+// weeks envelope (D82): a summary button, a panel that lists the whole active
+// directory at once and filters it locally as you type, checkbox results and
+// "Quitar todas". The server re-validates every uuid anyway.
 // =============================================================================
 
 import { useEffect, useId, useRef, useState } from "react";
@@ -25,6 +24,8 @@ export interface UserPickerOption {
   id: string;
   fullName: string;
   publicCode: string;
+  /** Matched by the local filter, never displayed. */
+  email?: string | null;
 }
 
 async function fetchUsers(term: string): Promise<UserPickerOption[]> {
@@ -60,6 +61,24 @@ export function toggleUserSelection(
     : [...selected, option];
 }
 
+/**
+ * Case-insensitive match over the name, the public code and the email: the
+ * directory list is local (like the weeks control), so filtering never queries.
+ */
+export function filterUserOptions(
+  options: readonly UserPickerOption[],
+  term: string,
+): UserPickerOption[] {
+  const needle = term.trim().toLowerCase();
+  if (needle === "") return [...options];
+  return options.filter(
+    (option) =>
+      option.fullName.toLowerCase().includes(needle) ||
+      option.publicCode.toLowerCase().includes(needle) ||
+      (option.email ?? "").toLowerCase().includes(needle),
+  );
+}
+
 interface UserPickerBaseProps {
   name: string;
   label: string;
@@ -76,6 +95,8 @@ export interface MultipleUserPickerProps extends UserPickerBaseProps {
   multiple: true;
   /** Current selections resolved server-side (one per repeated `name` param). */
   initialSelected: UserPickerOption[];
+  /** The whole active directory, loaded with the page (D82). */
+  options: readonly UserPickerOption[];
   /** Summary text when nobody is selected, e.g. "Todas las personas". */
   emptyLabel?: string;
 }
@@ -196,14 +217,12 @@ function MultipleUserPicker({
   label,
   placeholder,
   initialSelected,
+  options,
   emptyLabel = "Todas las personas",
 }: MultipleUserPickerProps) {
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState("");
   const [selected, setSelected] = useState<UserPickerOption[]>(initialSelected);
-  const [results, setResults] = useState<UserPickerOption[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const panelId = useId();
 
@@ -225,28 +244,15 @@ function MultipleUserPicker({
     };
   }, [open]);
 
-  const search = async () => {
-    setError(null);
-    setLoading(true);
-
-    try {
-      setResults(await fetchUsers(term));
-    } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : "No se pudo buscar.");
-      setResults(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Checkbox semantics: checking adds, unchecking removes. The term and the
-  // result list stay put so several people can be toggled per search.
+  // Checkbox semantics: checking adds, unchecking removes. The term stays put
+  // so several people can be toggled per search; filtering is purely local.
   const toggle = (option: UserPickerOption) => {
     setSelected((previous) => toggleUserSelection(previous, option));
   };
 
   const summary = userPickerSummary(selected, emptyLabel);
   const chosen = new Set(selected.map((option) => option.id));
+  const visible = filterUserOptions(options, term);
 
   return (
     <div ref={rootRef} className="relative text-sm">
@@ -298,57 +304,43 @@ function MultipleUserPicker({
           id={panelId}
           className="absolute z-20 mt-1 w-full rounded-md border bg-background p-2 shadow-md"
         >
-          <div className="mb-2 flex gap-2">
-            <Input
-              value={term}
-              onChange={(event) => setTerm(event.target.value)}
-              onKeyDown={(event) => {
-                // Enter inside the filter form would submit the whole form; here
-                // it means "search", which is why this handler exists.
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void search();
-                }
-              }}
-              placeholder={placeholder}
-              aria-label={`Buscar en ${label}`}
-            />
-            <Button type="button" variant="outline" onClick={() => void search()} disabled={loading}>
-              {loading ? "…" : "Buscar"}
-            </Button>
-          </div>
+          <input
+            type="text"
+            value={term}
+            onChange={(event) => setTerm(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter inside the filter form would submit the whole form; here
+              // it only narrows the local list, never the applied filters.
+              if (event.key === "Enter") event.preventDefault();
+            }}
+            placeholder={placeholder}
+            aria-label={`Buscar en ${label}`}
+            className="mb-2 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+          />
 
-          {error ? (
-            <p role="alert" className="mt-1 text-xs text-destructive">
-              {error}
-            </p>
-          ) : null}
-
-          {results !== null ? (
-            results.length === 0 ? (
-              <p className="mt-1 px-1 text-xs text-muted-foreground">Sin resultados.</p>
-            ) : (
-              <div className="max-h-64 overflow-y-auto">
-                <ul className="divide-y">
-                  {results.map((option) => (
-                    <li key={option.id}>
-                      <label className="flex cursor-pointer items-center gap-2 px-1 py-2">
-                        <input
-                          type="checkbox"
-                          checked={chosen.has(option.id)}
-                          onChange={() => toggle(option)}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{option.fullName}</span>
-                        <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                          {option.publicCode}
-                        </span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )
-          ) : null}
+          {visible.length === 0 ? (
+            <p className="px-1 py-2 text-xs text-muted-foreground">Sin resultados.</p>
+          ) : (
+            <div className="max-h-64 overflow-y-auto">
+              <ul className="divide-y">
+                {visible.map((option) => (
+                  <li key={option.id}>
+                    <label className="flex cursor-pointer items-center gap-2 px-1 py-2">
+                      <input
+                        type="checkbox"
+                        checked={chosen.has(option.id)}
+                        onChange={() => toggle(option)}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{option.fullName}</span>
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                        {option.publicCode}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {selected.length > 0 ? (
             <button

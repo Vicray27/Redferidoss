@@ -138,6 +138,14 @@ export interface PaymentRow {
 
 export type PaymentsPage = Paginated<PaymentRow>;
 
+/** One entry of the person filter's directory list (D82). */
+export interface PaymentsPickerUser {
+  id: string;
+  fullName: string;
+  publicCode: string;
+  email: string | null;
+}
+
 export interface PaymentsAdminService {
   /** One page of the master table plus the total for the paginator. */
   listPayments(actor: SessionActor, filters: PaymentsAdminFilters): Promise<PaymentsPage>;
@@ -145,6 +153,8 @@ export interface PaymentsAdminService {
   exportRows(actor: SessionActor, filters: PaymentsAdminFilters): Promise<PaymentRow[]>;
   /** The selection export: rows addressed by id, cap included. */
   selectedRows(actor: SessionActor, ids: readonly string[]): Promise<PaymentRow[]>;
+  /** The active directory for the person filter's list (D82); staff-only. */
+  listPickerUsers(actor: SessionActor): Promise<PaymentsPickerUser[]>;
 }
 
 // -----------------------------------------------------------------------------
@@ -532,6 +542,21 @@ export function createPaymentsAdminService(
         total,
         totalPages: total === 0 ? 0 : Math.ceil(total / filters.pageSize),
       };
+    },
+
+    async listPickerUsers(actor) {
+      requireStaff(actor);
+      // The person filter's panel lists the whole active directory and filters
+      // locally (D82); one ordered read keeps the list stable between searches.
+      // Staff-only directory read, same doctrine as dashboard.searchUsers.
+      return db.$queryRaw<PaymentsPickerUser[]>`
+        /* @payadmin:picker-users */
+        SELECT u.id, u.full_name AS "fullName", u.public_code AS "publicCode",
+               u.email::text AS email
+        FROM users u
+        WHERE u.deleted_at IS NULL
+        ORDER BY u.full_name
+      `;
     },
 
     async exportRows(actor, filters) {
