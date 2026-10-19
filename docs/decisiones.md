@@ -1486,3 +1486,42 @@ resuelve hacia lo más configurable (spec §18.7).
   cambia): es la página de impresión y el chrome de navegación no debe salir en
   papel. El API de `SessionShell` no cambió, así que las 14 páginas que lo usan
   no se tocaron.
+### D75 - ECharts for the interactive charts, royal blue primary and seven KPI cards
+- Context: (1) the user asked for Apache ECharts on the charts (interactive line
+  charts as the reference), (2) the main dashboard carried eight indicators and
+  some of them were ambiguous ("Reportes" counted reports of any status), and
+  (3) the system primary color had to become royal blue #03045e. D49 had chosen
+  dependency-free server SVG for every chart.
+- Decision: (1) ECharts 6 is adopted for the five dashboard charts plus one new
+  donut on /admin/reportes. `components/charts/echart.tsx` is the single client
+  entry point: it resolves the HSL tokens from the CSS custom properties inside
+  the effect (never at module or render scope), rewrites `hsl(var(--token))`
+  placeholders to comma-separated `hsl()` because zrender (the renderer behind
+  ECharts) does not parse the modern space-separated syntax, initialises the
+  instance, resizes it with a `ResizeObserver` and disposes it on unmount (safe
+  under React 19 StrictMode double-mount). Every option enables ECharts built-in
+  `aria`. Money stays server-side: each data point carries a pre-formatted
+  `valueLabel` string built with `formatAmount`, so no formatter callback and no
+  BigInt ever cross to the client; the bar chart keeps cents only for geometry
+  and divides them by 100 in the y-axis ticks (display only). The compliance
+  heatmap keeps its server-rendered grid (D49) because its cells are interactive
+  targets and its palette is pinned by tests; `lib/charts.ts` stays intact and
+  its geometry functions remain exported for the tests. (2) The `--primary` and
+  `--ring` tokens move to `239.3 93.8% 19%` (equivalent to #03045e); no other
+  token changes and no hardcoded hex outside the token block. (3) The dashboard
+  KPI set is reduced to seven self-explanatory cards: "Reportes" is removed,
+  "Incumplidos" is renamed to "Aportes incumplidos", and four cards gain a muted
+  one-line hint; the data layer (`lib/dashboard.ts`) is untouched, so this is
+  display only. (4) /admin/reportes gains one donut ("Participaci�n de la
+  semana": Reportaron / No reportaron) placed between the stats grid and the
+  matrix table, reusing the totals the page already loads (no new query).
+- Files: `components/charts/echart.tsx` (new), `components/charts/donut-chart.tsx`
+  (new), `components/charts/bar-chart.tsx`, `components/charts/line-chart.tsx`,
+  `components/charts/horizontal-bar-chart.tsx`, `app/admin/page.tsx`,
+  `app/admin/reportes/page.tsx`, `app/globals.css`, `package.json`.
+- Consequences: the dashboard charts now require JavaScript (the heatmap and
+  every table stay server-rendered). ECharts 6 is imported tree-shaken
+  (`echarts/core` + bar/line/pie charts + grid/tooltip/legend/aria components +
+  canvas renderer). The e2e journey keeps asserting the KPI money strings, which
+  proves the serializable `valueLabel` path still renders 0.00/10.00 USD. The
+  unit tests for `lib/charts.ts` and `lib/dashboard.ts` are untouched.

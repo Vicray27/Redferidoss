@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { DonutChart } from "@/components/charts/donut-chart";
 import { SessionShell } from "@/components/session-shell";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { requireStaffSession } from "@/lib/auth/require";
@@ -146,6 +147,22 @@ function SheetView({
         Los montos no incluyen los aportes rechazados. «Sin actividad» es quien reportó con todo en
         cero; «No reportó» es quien no envió nada.
       </p>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold tracking-tight">Participación de la semana</h2>
+        <DonutChart
+          slices={[
+            { name: "Reportaron", value: totals.reported, valueLabel: String(totals.reported) },
+            {
+              name: "No reportaron",
+              value: totals.notReported,
+              valueLabel: String(totals.notReported),
+            },
+          ]}
+          ariaLabel={`Participación de la semana ${cycle.periodKey}: ${totals.reported} reportaron y ${totals.notReported} no reportaron`}
+          emptyText="No hay personas en la semana para graficar."
+        />
+      </section>
 
       {matrix.rows.length === 0 ? (
         <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">

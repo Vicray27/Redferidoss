@@ -1,104 +1,89 @@
+"use client";
+
 // =============================================================================
-// components/charts/bar-chart.tsx — "monto aprobado por semana" (§8.5, D49).
+// components/charts/bar-chart.tsx — "monto aprobado por semana" (§8.5, D75).
 //
-// A server component: the SVG is produced once on the server with the pure
-// geometry of lib/charts.ts, so the chart exists even with JavaScript off and
-// needs no hydration. `formatValue` renders the money labels — the amounts
-// themselves stay exact cents upstream and only become `number` for drawing.
+// Client ECharts rendering. Every amount reaching this component is already a
+// display string built on the server with formatAmount; the numeric `value`
+// (cents) only feeds the geometry. The y-axis divides cents by 100 for the
+// ticks — display only, never money arithmetic.
 // =============================================================================
 
-import {
-  axisTicks,
-  niceMax,
-  slotCenter,
-  scaleY,
-  verticalBars,
-  type LayoutBox,
-} from "@/lib/charts";
+import type { EChartsOption } from "echarts";
+
+import { dataIndexOf, EChart } from "@/components/charts/echart";
 
 export interface BarPoint {
   label: string;
   /** Value in cents (for geometry only). */
   value: number;
+  /** Pre-formatted amount, built on the server. */
+  valueLabel: string;
   hint?: string;
 }
 
-const WIDTH = 720;
-const HEIGHT = 220;
-const BOX: LayoutBox = { width: WIDTH, height: HEIGHT, padTop: 16, padRight: 8, padBottom: 28, padLeft: 64 };
+const BAR_COLOR = "hsl(var(--primary))";
+const AXIS_TEXT = "hsl(var(--muted-foreground))";
+const SPLIT_LINE = "hsl(var(--border))";
 
 export function BarChart({
   points,
-  formatValue,
   ariaLabel,
+  emptyText,
 }: {
   points: readonly BarPoint[];
-  formatValue: (value: number) => string;
   ariaLabel: string;
+  emptyText?: string;
 }) {
   if (points.length === 0) {
-    return <EmptyChart>Aún no hay semanas para graficar.</EmptyChart>;
+    return (
+      <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
+        {emptyText ?? "Aún no hay semanas para graficar."}
+      </p>
+    );
   }
 
-  const max = niceMax(Math.max(...points.map((point) => point.value), 0));
-  const baseline = BOX.height - BOX.padBottom;
-  const ticks = axisTicks(max, 3);
-  const bars = verticalBars(
-    points.map((point) => point.value),
-    BOX,
-    { max, gapRatio: 0.4 },
-  );
-  // With 52 weeks the labels would collide: every k-th stays, k is whatever
-  // keeps at most ~13 labels on screen.
-  const labelEvery = Math.max(1, Math.ceil(points.length / 13));
+  const option: EChartsOption = {
+    aria: { enabled: true },
+    grid: { left: 60, right: 16, top: 16, bottom: 30 },
+    tooltip: {
+      trigger: "item",
+      backgroundColor: "#fff",
+      borderColor: SPLIT_LINE,
+      textStyle: { color: "hsl(var(--foreground))" },
+      formatter: (params: unknown) => {
+        const point = points[dataIndexOf(params)];
+        if (!point) return "";
+        return `${point.label}: ${point.valueLabel}${point.hint ? ` · ${point.hint}` : ""}`;
+      },
+    },
+    xAxis: {
+      type: "category",
+      data: points.map((point) => point.label),
+      axisLine: { lineStyle: { color: SPLIT_LINE } },
+      axisTick: { show: false },
+      axisLabel: { color: AXIS_TEXT, fontSize: 11, hideOverlap: true },
+    },
+    yAxis: {
+      type: "value",
+      axisLabel: {
+        color: AXIS_TEXT,
+        fontSize: 11,
+        // Ticks are cents in the data; the axis shows currency units.
+        formatter: (value: number) => (value / 100).toFixed(2),
+      },
+      splitLine: { lineStyle: { color: SPLIT_LINE } },
+    },
+    series: [
+      {
+        type: "bar",
+        name: "Aprobado",
+        data: points.map((point) => point.value),
+        barMaxWidth: 28,
+        itemStyle: { color: BAR_COLOR, borderRadius: [2, 2, 0, 0] },
+      },
+    ],
+  };
 
-  return (
-    <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="h-auto w-full text-primary" role="img" aria-label={ariaLabel}>
-      {ticks.map((tick) => {
-        const y = scaleY(tick, max, BOX);
-        return (
-          <g key={tick}>
-            <line x1={BOX.padLeft} x2={WIDTH - BOX.padRight} y1={y} y2={y} stroke="currentColor" strokeOpacity={0.12} />
-            <text x={BOX.padLeft - 8} y={y + 4} textAnchor="end" fontSize={11} fill="currentColor" fillOpacity={0.6}>
-              {formatValue(tick)}
-            </text>
-          </g>
-        );
-      })}
-
-      {points.map((point, index) => {
-        const bar = bars[index];
-        const x = slotCenter(index, points.length, BOX);
-        return (
-          <g key={`${point.label}-${index}`}>
-            <rect x={bar.x} y={bar.y} width={bar.width} height={bar.height} rx={2} fill="currentColor" fillOpacity={0.85}>
-              <title>{`${point.label}: ${formatValue(point.value)}${point.hint ? ` · ${point.hint}` : ""}`}</title>
-            </rect>
-            {index % labelEvery === 0 ? (
-              <text x={x} y={HEIGHT - 10} textAnchor="middle" fontSize={11} fill="currentColor" fillOpacity={0.6}>
-                {point.label}
-              </text>
-            ) : null}
-          </g>
-        );
-      })}
-
-      <line
-        x1={BOX.padLeft}
-        x2={WIDTH - BOX.padRight}
-        y1={baseline}
-        y2={baseline}
-        stroke="currentColor"
-        strokeOpacity={0.4}
-      />
-    </svg>
-  );
-}
-
-export function EmptyChart({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
-      {children}
-    </p>
-  );
+  return <EChart option={option} height={240} ariaLabel={ariaLabel} />;
 }

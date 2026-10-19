@@ -19,12 +19,14 @@ import { settings } from "@/lib/settings";
 // =============================================================================
 // app/admin/page.tsx — §8.5: the dashboard of "la Persona #1" (F5).
 //
-// The root sees the whole network's money here: eight KPI cards, five charts
+// The root sees the whole network's money here: seven KPI cards, five charts
 // and the door to the master table and the compliance matrix. The page is a
 // thin face over `createDashboardService`, exactly like /admin/reportes: pick
-// a week (and a window), read, render. Every chart is server-rendered SVG
-// (D49), so the screen works with JavaScript off and nothing about the money
-// crosses to a client bundle.
+// a week (and a window), read, render. The charts are ECharts client
+// components (D75): the server pre-formats every money label with
+// formatAmount and only serializable strings/numbers reach the browser, so no
+// amount is ever formatted client-side. The compliance heatmap stays a
+// server-rendered grid (D49).
 // =============================================================================
 
 export const dynamic = "force-dynamic";
@@ -135,13 +137,28 @@ function Overview({
 
       <section aria-label="Indicadores de la semana" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Total recaudado" value={`${kpis.collectedTotal} ${currency}`} />
-        <Stat label="Reportes" value={String(kpis.reportsCount)} />
         <Stat label="Ticket promedio" value={`${kpis.averageTicket} ${currency}`} />
-        <Stat label="Cumplimiento" value={`${(kpis.complianceRate * 100).toFixed(1)} %`} />
+        <Stat
+          label="Cumplimiento"
+          value={`${(kpis.complianceRate * 100).toFixed(1)} %`}
+          hint="Aportes aprobados sobre obligaciones de la semana"
+        />
         <Stat label="Pendientes por revisar" value={String(kpis.pendingCount)} href="/admin/revisiones" />
-        <Stat label="Incumplidos" value={String(kpis.missedCount)} />
-        <Stat label="Usuarios nuevos" value={String(kpis.newUsersCount)} />
-        <Stat label="Tamaño de la red" value={String(kpis.networkSize)} />
+        <Stat
+          label="Aportes incumplidos"
+          value={String(kpis.missedCount)}
+          hint="Obligaciones de la semana sin aporte aprobado"
+        />
+        <Stat
+          label="Usuarios nuevos"
+          value={String(kpis.newUsersCount)}
+          hint="Altas durante la semana en curso"
+        />
+        <Stat
+          label="Tamaño de la red"
+          value={String(kpis.networkSize)}
+          hint="Personas activas en toda la red"
+        />
       </section>
 
       <p className="text-xs text-muted-foreground">
@@ -151,12 +168,15 @@ function Overview({
 
       <ChartSection title="Monto aprobado por semana">
         <BarChart
-          points={weeklySeries.map((point) => ({
-            label: shortPeriodKey(point.periodKey),
-            value: cents(point.approvedTotal),
-            hint: `${point.reportsCount} reportes`,
-          }))}
-          formatValue={money}
+          points={weeklySeries.map((point) => {
+            const value = cents(point.approvedTotal);
+            return {
+              label: shortPeriodKey(point.periodKey),
+              value,
+              valueLabel: money(value),
+              hint: `${point.reportsCount} reportes`,
+            };
+          })}
           ariaLabel={`Monto aprobado por semana, últimas ${weeklySeries.length} semanas`}
         />
       </ChartSection>
@@ -167,12 +187,12 @@ function Overview({
           series={[
             {
               name: "Reportes",
-              className: "text-foreground",
+              color: "primary",
               values: weeklySeries.map((point) => point.reportsCount),
             },
             {
               name: "Obligaciones",
-              className: "text-muted-foreground",
+              color: "secondary",
               values: weeklySeries.map((point) => point.obligationsCount),
             },
           ]}
@@ -182,12 +202,15 @@ function Overview({
 
       <ChartSection title="Aporte aprobado por nivel del árbol">
         <HorizontalBarChart
-          rows={levelContribution.map((item) => ({
-            label: `Nivel ${item.level}`,
-            value: cents(item.total),
-            hint: `${item.reports} reportes`,
-          }))}
-          formatValue={money}
+          rows={levelContribution.map((item) => {
+            const value = cents(item.total);
+            return {
+              label: `Nivel ${item.level}`,
+              value,
+              valueLabel: money(value),
+              hint: `${item.reports} reportes`,
+            };
+          })}
           ariaLabel="Monto aprobado por nivel"
           emptyText="Sin aportes aprobados en la semana."
         />
@@ -196,12 +219,15 @@ function Overview({
       <div className="grid gap-6 lg:grid-cols-2">
         <ChartSection title="Top 10 contribuyentes de la semana">
           <HorizontalBarChart
-            rows={topContributors.map((person) => ({
-              label: `${person.fullName} (${person.publicCode})`,
-              value: cents(person.total),
-              hint: `${person.reports} reportes`,
-            }))}
-            formatValue={money}
+            rows={topContributors.map((person) => {
+              const value = cents(person.total);
+              return {
+                label: `${person.fullName} (${person.publicCode})`,
+                value,
+                valueLabel: money(value),
+                hint: `${person.reports} reportes`,
+              };
+            })}
             ariaLabel="Los diez contribuyentes con mayor monto aprobado"
             emptyText="Sin aportes aprobados en la semana."
           />
@@ -209,12 +235,15 @@ function Overview({
 
         <ChartSection title="Top 10 patrocinadores por red">
           <HorizontalBarChart
-            rows={topSponsors.map((person) => ({
-              label: `${person.fullName} (${person.publicCode})`,
-              value: cents(person.total),
-              hint: `${person.reports} reportes`,
-            }))}
-            formatValue={money}
+            rows={topSponsors.map((person) => {
+              const value = cents(person.total);
+              return {
+                label: `${person.fullName} (${person.publicCode})`,
+                value,
+                valueLabel: money(value),
+                hint: `${person.reports} reportes`,
+              };
+            })}
             ariaLabel="Los diez patrocinadores con mayor aporte de su red"
             emptyText="Sin aportes aprobados en la semana."
           />
@@ -259,7 +288,17 @@ function ChartSection({
   );
 }
 
-function Stat({ label, value, href }: { label: string; value: string; href?: string }) {
+function Stat({
+  label,
+  value,
+  href,
+  hint,
+}: {
+  label: string;
+  value: string;
+  href?: string;
+  hint?: string;
+}) {
   const content = (
     <>
       <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
@@ -267,6 +306,7 @@ function Stat({ label, value, href }: { label: string; value: string; href?: str
         {value}
         {href ? <span className="ml-1 text-xs font-normal text-primary">→</span> : null}
       </dd>
+      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
     </>
   );
   if (href) {
