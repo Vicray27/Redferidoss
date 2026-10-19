@@ -8,6 +8,8 @@ import { authorization, type SessionActor } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
 import {
+  CONSOLIDATED_PAGE_SIZE_DEFAULT,
+  CONSOLIDATED_PAGE_SIZES,
   createReportsService,
   sharedCurrencyLabel,
   sheetMatrix,
@@ -34,11 +36,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
   const session = await requireStaffSession("/admin/reportes");
   const params = await searchParams;
   const requestedKey = typeof params.cycle === "string" ? params.cycle : undefined;
+  const page = positiveInt(params.page);
+  const pageSize = parsePageSize(params.page_size);
 
   const reports = createReportsService(prisma, authorization);
   const [cycles, resolved] = await Promise.all([
     reports.listCycles(session),
-    loadSheet(reports, session, requestedKey),
+    loadSheet(reports, session, requestedKey, page, pageSize),
   ]);
   const { sheet, notice } = resolved;
 
@@ -70,7 +74,16 @@ function SheetView({
 }) {
   const matrix = sheetMatrix(sheet);
   const { totals, cycle } = sheet;
-  const currency = sharedCurrencyLabel(sheet);
+  // Paginated reads carry the week-wide label from the totals query; the
+  // row-derived label remains for any non-paginated caller.
+  const currency =
+    sheet.currencyLabel !== undefined ? sheet.currencyLabel : sharedCurrencyLabel(sheet);
+  const total = sheet.total ?? sheet.rows.length;
+  const pageNumber = sheet.page ?? 1;
+  const pageSize = sheet.pageSize ?? CONSOLIDATED_PAGE_SIZE_DEFAULT;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const firstRow = total === 0 ? 0 : (pageNumber - 1) * pageSize + 1;
+  const lastRow = Math.min(pageNumber * pageSize, total);
   const options = cycles.some((option) => option.periodKey === cycle.periodKey)
     ? cycles
     : [cycle, ...cycles];
@@ -164,6 +177,12 @@ function SheetView({
         />
       </section>
 
+      <p className="text-sm text-muted-foreground">
+        {total === 0
+          ? "Sin resultados en esta semana."
+          : `${total.toLocaleString("es")} personas · mostrando ${firstRow}–${lastRow}`}
+      </p>
+
       {matrix.rows.length === 0 ? (
         <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
           No hay personas con obligación, reporte semanal ni ofrenda en esta semana.
@@ -194,6 +213,30 @@ function SheetView({
           </table>
         </div>
       )}
+
+      {totalPages > 1 ? (
+        <nav className="flex items-center justify-end gap-3 text-sm" aria-label="Paginación">
+          {pageNumber > 1 ? (
+            <Link
+              href={`/admin/reportes?${pageLink(cycle.periodKey, pageSize, pageNumber - 1)}`}
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              Anterior
+            </Link>
+          ) : null}
+          <span className="text-muted-foreground">
+            Página {pageNumber} de {totalPages}
+          </span>
+          {pageNumber < totalPages ? (
+            <Link
+              href={`/admin/reportes?${pageLink(cycle.periodKey, pageSize, pageNumber + 1)}`}
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              Siguiente
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
     </div>
   );
 }
@@ -212,9 +255,15 @@ async function loadSheet(
   reports: ReportsService,
   actor: SessionActor,
   requestedKey: string | undefined,
+  page: number,
+  pageSize: number,
 ): Promise<{ sheet: ConsolidatedSheet | null; notice: string | null }> {
+  const pagination = { page, pageSize };
   try {
-    return { sheet: await reports.getConsolidatedSheet(actor, { periodKey: requestedKey }), notice: null };
+    return {
+      sheet: await reports.getConsolidatedSheet(actor, { ...pagination, periodKey: requestedKey }),
+      notice: null,
+    };
   } catch (error) {
     if (!(error instanceof NotFoundError)) throw error;
     if (requestedKey !== undefined) {
@@ -222,7 +271,7 @@ async function loadSheet(
       // instead of trading the whole page for an error screen.
       try {
         return {
-          sheet: await reports.getConsolidatedSheet(actor),
+          sheet: await reports.getConsolidatedSheet(actor, pagination),
           notice: `La semana ${requestedKey} no existe; se muestra la semana vigente.`,
         };
       } catch (fallbackError) {
@@ -231,4 +280,27 @@ async function loadSheet(
     }
     return { sheet: null, notice: null };
   }
+}
+
+/** Page number from the URL: integers >= 1, otherwise page 1. */
+function positiveInt(value: string | string[] | undefined): number {
+  const raw = typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
+}
+
+/** The three supported page sizes; anything else falls back to 50. */
+function parsePageSize(value: string | string[] | undefined): number {
+  const raw = typeof value === "string" ? Number(value) : Number.NaN;
+  return (CONSOLIDATED_PAGE_SIZES as readonly number[]).includes(raw)
+    ? raw
+    : CONSOLIDATED_PAGE_SIZE_DEFAULT;
+}
+
+/** Pagination link: ONLY the cycle plus page and page_size survive. */
+function pageLink(periodKey: string, pageSize: number, page: number): string {
+  const query = new URLSearchParams();
+  query.set("cycle", periodKey);
+  if (pageSize !== CONSOLIDATED_PAGE_SIZE_DEFAULT) query.set("page_size", String(pageSize));
+  query.set("page", String(page));
+  return query.toString();
 }

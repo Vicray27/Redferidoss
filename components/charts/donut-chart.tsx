@@ -66,14 +66,10 @@ export function DonutChart({
         center: ["50%", "44%"],
         avoidLabelOverlap: true,
         itemStyle: { borderColor: "#fff", borderWidth: 2 },
-        label: {
-          color: AXIS_TEXT,
-          fontSize: 12,
-          formatter: (params: unknown) => {
-            const slice = slices[dataIndexOf(params)];
-            return slice ? `${slice.name}: ${slice.valueLabel}` : "";
-          },
-        },
+        // Outside labels are clipped by the 240px canvas edge; the legend,
+        // tooltip and stat cards already carry the same names and counts.
+        label: { show: false },
+        labelLine: { show: false },
         data: slices.map((slice, index) => ({
           name: slice.name,
           value: slice.value,

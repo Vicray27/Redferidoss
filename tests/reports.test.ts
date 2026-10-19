@@ -54,7 +54,7 @@ function isSqlLike(value: unknown): value is { sql: string; values: unknown[] } 
 }
 
 class ReportsFake implements ReportsDb {
-  readonly calls: Array<{ marker: string; values: unknown[] }> = [];
+  readonly calls: Array<{ marker: string; text: string; values: unknown[] }> = [];
   private readonly handlers = new Map<string, Handler>();
 
   on(marker: string, handler: Handler): this {
@@ -62,7 +62,7 @@ class ReportsFake implements ReportsDb {
     return this;
   }
 
-  callsFor(marker: string): Array<{ marker: string; values: unknown[] }> {
+  callsFor(marker: string): Array<{ marker: string; text: string; values: unknown[] }> {
     return this.calls.filter((call) => call.marker === marker);
   }
 
@@ -95,7 +95,7 @@ class ReportsFake implements ReportsDb {
     if (!marker) throw new Error(`ReportsFake: unmarked statement: ${text}`);
     const handler = this.handlers.get(marker);
     if (!handler) throw new Error(`ReportsFake: no handler for ${marker}`);
-    this.calls.push({ marker, values });
+    this.calls.push({ marker, text, values });
     return (await handler(values)) as T;
   }
 }
@@ -381,6 +381,117 @@ describe("getConsolidatedSheet", () => {
       amountApproved: "10.05",
       visitors: 2,
     });
+  });
+});
+
+describe("getConsolidatedSheet pagination", () => {
+  const WEEK_TOTALS = {
+    people: 4,
+    reported: 3,
+    attended: 1,
+    offered: 2,
+    visitors: 2,
+    amountTotal: "10.15",
+    amountApproved: "10.05",
+    currencies: ["USD"] as string[] | null,
+  };
+
+  const isNumber = (value: unknown): value is number => typeof value === "number";
+
+  function buildPaged(overrides: { pageRows?: unknown[]; totals?: Partial<typeof WEEK_TOTALS> } = {}) {
+    const db = new ReportsFake();
+    const { authz } = makeAuthz({ unrestricted: true });
+    db.on("cycle-by-key", () => [CYCLE])
+      .on("current-cycle", () => [CYCLE])
+      .on("consolidated-sheet-page", () => overrides.pageRows ?? [REPORTER, SILENT])
+      .on("consolidated-totals", () => [{ ...WEEK_TOTALS, ...overrides.totals }]);
+    const service = createReportsService(db, authz, { now: () => NOW });
+    return { db, service };
+  }
+
+  it("reads one page with a stable order and LIMIT/OFFSET bindings", async () => {
+    const { db, service } = buildPaged();
+
+    const sheet = await service.getConsolidatedSheet(STAFF, {
+      periodKey: CYCLE.periodKey,
+      page: 2,
+      pageSize: 25,
+    });
+
+    expect(sheet.rows.map((row) => row.userId)).toEqual(["u-1", "u-2"]);
+    expect(sheet.page).toBe(2);
+    expect(sheet.pageSize).toBe(25);
+    expect(sheet.total).toBe(4);
+
+    const pageCall = db.callsFor("consolidated-sheet-page")[0];
+    expect(pageCall?.text).toContain("ORDER BY u.full_name, u.id");
+    // Page 2 of 25: LIMIT and OFFSET both bind 25; the cycle binds three times.
+    const values = pageCall?.values ?? [];
+    expect(values.filter((value) => value === 25)).toHaveLength(2);
+    expect(values.filter((value) => value === CYCLE.id)).toHaveLength(3);
+    // Only the page statement and the totals run: the legacy marker stays off.
+    expect(db.callsFor("consolidated-sheet")).toHaveLength(0);
+    expect(db.callsFor("consolidated-totals")).toHaveLength(1);
+  });
+
+  it("takes the stat strip and the currency label from the week-wide totals", async () => {
+    const { db, service } = buildPaged();
+
+    const sheet = await service.getConsolidatedSheet(STAFF, { page: 1, pageSize: 50 });
+
+    // Two rows arrived, but the totals describe the whole week.
+    expect(sheet.rows).toHaveLength(2);
+    expect(sheet.totals).toEqual({
+      people: 4,
+      reported: 3,
+      notReported: 1,
+      attended: 1,
+      offered: 2,
+      amountTotal: "10.15",
+      amountApproved: "10.05",
+      visitors: 2,
+    });
+    expect(sheet.currencyLabel).toBe("USD");
+
+    const totalsText = db.callsFor("consolidated-totals")[0]?.text ?? "";
+    expect(totalsText).toContain("COUNT(*)");
+    expect(totalsText).toContain("array_agg(DISTINCT r.currency)");
+    // The aggregate has no pagination clause; its only LIMIT is the literal
+    // `LIMIT 1` of the per-person LATERAL join.
+    expect(totalsText).not.toContain("LIMIT ?");
+    expect(totalsText).not.toContain("OFFSET");
+  });
+
+  it("says «varias monedas» when the totals query mixes currencies", async () => {
+    const { service } = buildPaged({ totals: { currencies: ["USD", "VES"] } });
+
+    const sheet = await service.getConsolidatedSheet(STAFF, { page: 1, pageSize: 50 });
+
+    expect(sheet.currencyLabel).toBe("varias monedas");
+  });
+
+  it("defaults the page and clamps the page size to 25/50/100", async () => {
+    const { db, service } = buildPaged({ pageRows: [] });
+
+    await service.getConsolidatedSheet(STAFF, { page: 3 });
+    expect(
+      (db.callsFor("consolidated-sheet-page").at(-1)?.values ?? []).filter(isNumber),
+    ).toEqual([50, 100]);
+
+    await service.getConsolidatedSheet(STAFF, { page: 2, pageSize: 10 });
+    expect(
+      (db.callsFor("consolidated-sheet-page").at(-1)?.values ?? []).filter(isNumber),
+    ).toEqual([25, 25]);
+
+    await service.getConsolidatedSheet(STAFF, { page: 1, pageSize: 999 });
+    expect(
+      (db.callsFor("consolidated-sheet-page").at(-1)?.values ?? []).filter(isNumber),
+    ).toEqual([100, 0]);
+
+    await service.getConsolidatedSheet(STAFF, { page: 0, pageSize: 50 });
+    expect(
+      (db.callsFor("consolidated-sheet-page").at(-1)?.values ?? []).filter(isNumber),
+    ).toEqual([50, 0]);
   });
 });
 

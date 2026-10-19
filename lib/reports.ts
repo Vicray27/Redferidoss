@@ -112,6 +112,28 @@ export interface ConsolidatedSheet {
   cycle: CycleOption;
   rows: ConsolidatedSheetRow[];
   totals: ConsolidatedSheetTotals;
+  /** Week-wide person count; present only when the caller asked for a page. */
+  total?: number;
+  /** Echo of the requested (normalized) page; present with pagination. */
+  page?: number;
+  /** Effective page size (25/50/100); present with pagination. */
+  pageSize?: number;
+  /**
+   * Week-wide currency label derived from the totals query (same rules as
+   * `sharedCurrencyLabel`); present with pagination.
+   */
+  currencyLabel?: string | null;
+}
+
+export interface ConsolidatedSheetOptions {
+  periodKey?: string;
+  /**
+   * 1-based page for the admin table. Export and print pass no page and read
+   * EVERY row: a downloadable document must never be a slice.
+   */
+  page?: number;
+  /** One of 25/50/100 (default 50); anything else snaps to the nearest size. */
+  pageSize?: number;
 }
 
 export interface ReportsService {
@@ -120,8 +142,13 @@ export interface ReportsService {
    * /admin surface, and the guard runs before any statement.
    */
   listCycles(actor: SessionActor, options?: { limit?: number }): Promise<CycleOption[]>;
-  /** The consolidated sheet of one cycle (default: the current effective one). */
-  getConsolidatedSheet(actor: SessionActor, selector?: { periodKey?: string }): Promise<ConsolidatedSheet>;
+  /**
+   * The consolidated sheet of one cycle (default: the current effective one).
+   * With `page`, the rows are one page and the totals come from a week-wide
+   * aggregate; without it (export/print), every row is read and the totals are
+   * derived from those same rows.
+   */
+  getConsolidatedSheet(actor: SessionActor, options?: ConsolidatedSheetOptions): Promise<ConsolidatedSheet>;
 }
 
 export interface ReportsServiceOptions {
@@ -131,9 +158,35 @@ export interface ReportsServiceOptions {
 const DEFAULT_CYCLES_LISTED = 52;
 const MAX_CYCLES_LISTED = 104;
 
+/** Supported consolidated-sheet page sizes (default 50). */
+export const CONSOLIDATED_PAGE_SIZES = [25, 50, 100] as const;
+export const CONSOLIDATED_PAGE_SIZE_DEFAULT = 50;
+
 function clampLimit(raw: number | undefined, fallback: number, max: number): number {
   if (raw === undefined || !Number.isFinite(raw)) return fallback;
   return Math.min(Math.max(1, Math.trunc(raw)), max);
+}
+
+/** 1-based page; anything malformed reads page 1. */
+function normalizePage(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw)) return 1;
+  return Math.max(1, Math.trunc(raw));
+}
+
+/** Snap a page size into the supported 25/50/100 set (default 50). */
+function normalizePageSize(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw)) return CONSOLIDATED_PAGE_SIZE_DEFAULT;
+  const value = Math.min(100, Math.max(25, Math.trunc(raw)));
+  let best: number = CONSOLIDATED_PAGE_SIZES[0];
+  for (const size of CONSOLIDATED_PAGE_SIZES) {
+    if (Math.abs(size - value) < Math.abs(best - value)) best = size;
+  }
+  return best;
+}
+
+/** DECIMAL text from an aggregate; SQL NULL (no live money) reads as "0.00". */
+function totalsAmount(raw: string | null | undefined): string {
+  return formatAmount(parseAmount(raw ?? "0"));
 }
 
 // -----------------------------------------------------------------------------
@@ -165,6 +218,18 @@ interface SheetRawRow {
   currency: string | null;
   method: string | null;
   paidAt: Date | null;
+}
+
+/** One row of the week-wide totals aggregate (same joins, no LIMIT). */
+interface SheetTotalsRawRow {
+  people: number;
+  reported: number;
+  attended: number;
+  offered: number;
+  visitors: number;
+  amountTotal: string | null;
+  amountApproved: string | null;
+  currencies: string[] | null;
 }
 
 /** JSONB can arrive as anything; only a list of non-empty strings is valid. */
@@ -540,55 +605,157 @@ export function createReportsService(
       `;
     },
 
-    async getConsolidatedSheet(actor, selector = {}) {
+    async getConsolidatedSheet(actor, options = {}) {
       requireStaff(actor);
-      const cycle = selector.periodKey
-        ? await cycleByPeriodKey(selector.periodKey)
+      const cycle = options.periodKey
+        ? await cycleByPeriodKey(options.periodKey)
         : await currentCycle();
 
       const scope = await authz.scopeFilter(actor, { alias: "u" });
       const condition = scope.unrestricted ? Prisma.empty : Prisma.sql`AND ${scope.fragment}`;
 
-      const raw = await db.$queryRaw<SheetRawRow[]>`
-        /* @reports:consolidated-sheet */
-        SELECT u.id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
-               u.depth AS "level", s.full_name AS "sponsorName", s.public_code AS "sponsorCode",
-               w.id AS "weeklyReportId",
-               w.attended, w.discipleship_attended AS "discipleshipAttended",
-               w.cells_total AS "cellsTotal", w.cells_held AS "cellsHeld", w.cells_not_held AS "cellsNotHeld",
-               w.cell_attendees AS "cellAttendees", w.cell_absentees AS "cellAbsentees",
-               w.cell_new_visitors AS "cellNewVisitors", w.cell_new_cells AS "cellNewCells",
-               w.visitors, w.note,
-               r.id AS "reportId", r.status::text AS "offeringStatus", r.amount::text AS amount,
-               r.currency, COALESCE(r.label, r.method::text) AS method, r.paid_at AS "paidAt"
-        FROM users u
-        LEFT JOIN users s ON s.id = u.sponsor_id
-        LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
-        LEFT JOIN LATERAL (
-          -- One offering per person: the live report (PENDING/APPROVED) when it
-          -- exists — at most one per uq_report_user_cycle (D4) — else the most
-          -- recent REJECTED one, which is what the sheet must show as rejected.
-          -- The catalog label travels with it (D55): a custom method must never
-          -- read as OTHER in an admin document.
-          SELECT r.id, r.status, r.amount, r.currency, r.method, r.paid_at, pm.label
-          FROM payment_reports r
-          LEFT JOIN payment_methods pm ON pm.id = r.method_id
-          WHERE r.user_id = u.id AND r.cycle_id = ${cycle.id}::uuid
-          ORDER BY (r.status <> 'REJECTED') DESC, r.reported_at DESC
-          LIMIT 1
-        ) r ON true
-        WHERE u.deleted_at IS NULL
-          AND (
-            EXISTS (SELECT 1 FROM cycle_obligations o WHERE o.cycle_id = ${cycle.id}::uuid AND o.user_id = u.id)
-            OR w.id IS NOT NULL
-            OR r.id IS NOT NULL
-          )
-          ${condition}
-        ORDER BY u.full_name
-      `;
+      if (options.page === undefined) {
+        // Export/print path: the whole sheet in one statement, totals derived
+        // from those same rows (D48).
+        const raw = await db.$queryRaw<SheetRawRow[]>`
+          /* @reports:consolidated-sheet */
+          SELECT u.id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
+                 u.depth AS "level", s.full_name AS "sponsorName", s.public_code AS "sponsorCode",
+                 w.id AS "weeklyReportId",
+                 w.attended, w.discipleship_attended AS "discipleshipAttended",
+                 w.cells_total AS "cellsTotal", w.cells_held AS "cellsHeld", w.cells_not_held AS "cellsNotHeld",
+                 w.cell_attendees AS "cellAttendees", w.cell_absentees AS "cellAbsentees",
+                 w.cell_new_visitors AS "cellNewVisitors", w.cell_new_cells AS "cellNewCells",
+                 w.visitors, w.note,
+                 r.id AS "reportId", r.status::text AS "offeringStatus", r.amount::text AS amount,
+                 r.currency, COALESCE(r.label, r.method::text) AS method, r.paid_at AS "paidAt"
+          FROM users u
+          LEFT JOIN users s ON s.id = u.sponsor_id
+          LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
+          LEFT JOIN LATERAL (
+            -- One offering per person: the live report (PENDING/APPROVED) when it
+            -- exists — at most one per uq_report_user_cycle (D4) — else the most
+            -- recent REJECTED one, which is what the sheet must show as rejected.
+            -- The catalog label travels with it (D55): a custom method must never
+            -- read as OTHER in an admin document.
+            SELECT r.id, r.status, r.amount, r.currency, r.method, r.paid_at, pm.label
+            FROM payment_reports r
+            LEFT JOIN payment_methods pm ON pm.id = r.method_id
+            WHERE r.user_id = u.id AND r.cycle_id = ${cycle.id}::uuid
+            ORDER BY (r.status <> 'REJECTED') DESC, r.reported_at DESC
+            LIMIT 1
+          ) r ON true
+          WHERE u.deleted_at IS NULL
+            AND (
+              EXISTS (SELECT 1 FROM cycle_obligations o WHERE o.cycle_id = ${cycle.id}::uuid AND o.user_id = u.id)
+              OR w.id IS NOT NULL
+              OR r.id IS NOT NULL
+            )
+            ${condition}
+          ORDER BY u.full_name
+        `;
 
-      const rows = raw.map(toConsolidatedRow);
-      return { cycle, rows, totals: summarizeSheet(rows) };
+        const rows = raw.map(toConsolidatedRow);
+        return { cycle, rows, totals: summarizeSheet(rows) };
+      }
+
+      // Screen path: one page of rows plus ONE week-wide aggregate. The stat
+      // strip must describe the week, never the page the operator happens to
+      // be looking at (D48: totals and table cannot drift).
+      const page = normalizePage(options.page);
+      const pageSize = normalizePageSize(options.pageSize);
+      const offset = (page - 1) * pageSize;
+
+      const [pageRaw, totalsRaw] = await Promise.all([
+        db.$queryRaw<SheetRawRow[]>`
+          /* @reports:consolidated-sheet-page */
+          SELECT u.id AS "userId", u.full_name AS "fullName", u.public_code AS "publicCode",
+                 u.depth AS "level", s.full_name AS "sponsorName", s.public_code AS "sponsorCode",
+                 w.id AS "weeklyReportId",
+                 w.attended, w.discipleship_attended AS "discipleshipAttended",
+                 w.cells_total AS "cellsTotal", w.cells_held AS "cellsHeld", w.cells_not_held AS "cellsNotHeld",
+                 w.cell_attendees AS "cellAttendees", w.cell_absentees AS "cellAbsentees",
+                 w.cell_new_visitors AS "cellNewVisitors", w.cell_new_cells AS "cellNewCells",
+                 w.visitors, w.note,
+                 r.id AS "reportId", r.status::text AS "offeringStatus", r.amount::text AS amount,
+                 r.currency, COALESCE(r.label, r.method::text) AS method, r.paid_at AS "paidAt"
+          FROM users u
+          LEFT JOIN users s ON s.id = u.sponsor_id
+          LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
+          LEFT JOIN LATERAL (
+            SELECT r.id, r.status, r.amount, r.currency, r.method, r.paid_at, pm.label
+            FROM payment_reports r
+            LEFT JOIN payment_methods pm ON pm.id = r.method_id
+            WHERE r.user_id = u.id AND r.cycle_id = ${cycle.id}::uuid
+            ORDER BY (r.status <> 'REJECTED') DESC, r.reported_at DESC
+            LIMIT 1
+          ) r ON true
+          WHERE u.deleted_at IS NULL
+            AND (
+              EXISTS (SELECT 1 FROM cycle_obligations o WHERE o.cycle_id = ${cycle.id}::uuid AND o.user_id = u.id)
+              OR w.id IS NOT NULL
+              OR r.id IS NOT NULL
+            )
+            ${condition}
+          ORDER BY u.full_name, u.id
+          LIMIT ${pageSize}
+          OFFSET ${offset}
+        `,
+        db.$queryRaw<SheetTotalsRawRow[]>`
+          /* @reports:consolidated-totals */
+          SELECT COUNT(*)::int AS people,
+                 COUNT(*) FILTER (WHERE w.id IS NOT NULL)::int AS reported,
+                 COUNT(*) FILTER (WHERE w.id IS NOT NULL AND w.attended)::int AS attended,
+                 COUNT(*) FILTER (WHERE r.id IS NOT NULL AND r.status IN ('PENDING', 'APPROVED'))::int AS offered,
+                 COALESCE(SUM(
+                   CASE WHEN jsonb_typeof(w.visitors) = 'array' THEN jsonb_array_length(w.visitors) ELSE 0 END
+                 ), 0)::int AS visitors,
+                 SUM(r.amount) FILTER (WHERE r.status IN ('PENDING', 'APPROVED'))::text AS "amountTotal",
+                 SUM(r.amount) FILTER (WHERE r.status = 'APPROVED')::text AS "amountApproved",
+                 array_agg(DISTINCT r.currency) FILTER (WHERE r.status IN ('PENDING', 'APPROVED')) AS currencies
+          FROM users u
+          LEFT JOIN users s ON s.id = u.sponsor_id
+          LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
+          LEFT JOIN LATERAL (
+            SELECT r.id, r.status, r.amount, r.currency, r.method, r.paid_at, pm.label
+            FROM payment_reports r
+            LEFT JOIN payment_methods pm ON pm.id = r.method_id
+            WHERE r.user_id = u.id AND r.cycle_id = ${cycle.id}::uuid
+            ORDER BY (r.status <> 'REJECTED') DESC, r.reported_at DESC
+            LIMIT 1
+          ) r ON true
+          WHERE u.deleted_at IS NULL
+            AND (
+              EXISTS (SELECT 1 FROM cycle_obligations o WHERE o.cycle_id = ${cycle.id}::uuid AND o.user_id = u.id)
+              OR w.id IS NOT NULL
+              OR r.id IS NOT NULL
+            )
+            ${condition}
+        `,
+      ]);
+
+      const totalsRow = totalsRaw[0];
+      const people = Number(totalsRow?.people ?? 0);
+      const reported = Number(totalsRow?.reported ?? 0);
+
+      return {
+        cycle,
+        rows: pageRaw.map(toConsolidatedRow),
+        totals: {
+          people,
+          reported,
+          notReported: people - reported,
+          attended: Number(totalsRow?.attended ?? 0),
+          offered: Number(totalsRow?.offered ?? 0),
+          amountTotal: totalsAmount(totalsRow?.amountTotal),
+          amountApproved: totalsAmount(totalsRow?.amountApproved),
+          visitors: Number(totalsRow?.visitors ?? 0),
+        },
+        total: people,
+        page,
+        pageSize,
+        currencyLabel: currencySetLabel(totalsRow?.currencies ?? []),
+      };
     },
   };
 }
