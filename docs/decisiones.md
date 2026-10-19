@@ -1682,3 +1682,24 @@ resuelve hacia lo más configurable (spec §18.7).
   pure white over a near-white background and muted-foreground equals
   foreground: that is faithful to the source theme, not a bug.
 
+### D82 - The person filter adopts the weeks control pattern
+- Context: D79 made the weeks control a summary button plus a searchable panel
+  with checkboxes and "Quitar todas"; the person filter kept the older shape
+  (chips, an always-visible search box and a pick-only result list), so two
+  neighboring filters behaved differently.
+- Decision: in multiple mode, `UserPickerField` now uses the same envelope:
+  a summary button ("Todas las personas" / the person's name / "N personas
+  seleccionadas"), a panel that closes on outside click and Escape, the search
+  box inside the panel, a checkbox result list that toggles selection
+  (checking adds, unchecking removes) and "Quitar todas". Search stays
+  server-side (submit-to-search) because the directory has thousands of users:
+  only the control envelope matches the weeks control, not the filtering
+  mechanics. Chips remain under the button so the chosen people stay visible
+  with the panel closed. The single picker ("Pagos de la red de") is unchanged.
+- Files: `app/admin/pagos/user-picker.tsx`, `tests/user-picker.test.ts` (new).
+- Consequences: the wire format is untouched (one hidden input per selected
+  person, repeated `userId` params). `e2e/admin-pages.spec.ts` only pins the
+  weeks legend, so it is unaffected. The new pure helpers
+  (`userPickerSummary`, `toggleUserSelection`) carry the rules and are
+  unit-tested.
+
