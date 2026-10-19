@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import { SessionShell } from "@/components/session-shell";
 import { requireSession } from "@/lib/auth/require";
 import { authorization } from "@/lib/authz";
@@ -47,24 +45,6 @@ export default async function PortalPage() {
         <Stat label="Tamaño de mi red" value={String(size)} />
         <Stat label="Referidos directos" value={String(self.childrenCount)} />
       </dl>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <NavCard
-          href="/portal/network"
-          title="Mi red"
-          description="Árbol de referidos, búsqueda y fichas de las personas de tu red."
-        />
-        <NavCard
-          href="/portal/invitations"
-          title="Invitaciones"
-          description="Tu link permanente, invitaciones de un solo uso y cupos."
-        />
-        <NavCard
-          href="/portal/semana"
-          title="Semana y aportes"
-          description="Reporte de la Visión Celular, el aporte de esta semana y tu historial."
-        />
-      </div>
     </SessionShell>
   );
 }
@@ -75,25 +55,5 @@ function Stat({ label, value }: { label: string; value: string }) {
       <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
       <dd className="mt-1 text-sm font-medium">{value}</dd>
     </div>
-  );
-}
-
-function NavCard({
-  href,
-  title,
-  description,
-}: {
-  href: string;
-  title: string;
-  description: string;
-}) {
-  return (
-    <Link
-      href={href}
-      className="rounded-lg border bg-background p-5 text-sm transition-colors hover:bg-muted/50"
-    >
-      <p className="font-medium text-foreground">{title}</p>
-      <p className="mt-1 text-muted-foreground">{description}</p>
-    </Link>
   );
 }

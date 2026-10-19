@@ -1,16 +1,24 @@
 // =============================================================================
 // components/session-shell.tsx — the frame every signed-in page renders inside.
 //
-// Small on purpose. F2 only has to prove that a session EXISTS and carries the
-// right identity; the dashboards themselves are F5. Extracting the header and
-// the sign-out form here keeps /admin and /portal from growing two copies of
-// the same markup, which is how the two areas end up disagreeing about what a
-// user sees.
+// Desktop: a persistent left rail with the brand, the module menu and the
+// identity/sign-out block, plus a full-width content column (no max-w). Mobile:
+// a sticky top bar, a swipeable menu strip and the same content column.
+//
+// The menu lives in `SidebarNav` (a client component, because the active item
+// follows `usePathname`). `NotificationBadge` stays a SERVER component here:
+// it queries the database, so it is rendered by this server shell and never
+// from inside the client menu.
+//
+// Extracting the identity block and the sign-out form keeps /admin and /portal
+// from growing two copies of the same markup, which is how the two areas end
+// up disagreeing about what a user sees.
 // =============================================================================
 
 import type { SessionPayload } from "@/lib/auth/session";
-import { Button } from "@/components/ui/button";
 import { NotificationBadge } from "@/components/notification-badge";
+import { SidebarNav } from "@/components/sidebar-nav";
+import { Button } from "@/components/ui/button";
 import { logoutAction } from "@/lib/auth/actions";
 
 const ROLE_LABEL: Record<SessionPayload["role"], string> = {
@@ -31,68 +39,64 @@ export function SessionShell({
   children?: React.ReactNode;
 }) {
   return (
-    <main className="min-h-screen bg-muted/40">
-      <header className="border-b bg-background">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-6 py-4">
+    <div className="min-h-screen bg-muted/40">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r bg-background lg:flex">
+        <div className="px-4 py-5">
+          <p className="text-sm font-semibold tracking-tight">Red de Referidos</p>
+          <p className="mt-1 text-xs text-muted-foreground">{ROLE_LABEL[session.role]}</p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto py-2">
+          <SidebarNav role={session.role} variant="list" />
+        </div>
+
+        <div className="mt-auto space-y-3 border-t p-4">
           <div className="min-w-0">
-            <p className="text-sm font-semibold tracking-tight">Red de Referidos</p>
-            <p className="truncate text-xs text-muted-foreground">{session.fullName}</p>
+            <p className="truncate text-sm font-medium">{session.fullName}</p>
+            <p className="font-mono text-xs text-muted-foreground">{session.publicCode}</p>
+            <p className="text-xs text-muted-foreground">{ROLE_LABEL[session.role]}</p>
           </div>
 
-          <div className="flex items-center gap-4">
-            <NotificationBadge session={session} />
+          <NotificationBadge session={session} />
 
-            <dl className="hidden items-center gap-4 text-xs sm:flex">
-              <div className="text-right">
-                <dt className="text-muted-foreground">Rol</dt>
-                <dd className="font-medium">{ROLE_LABEL[session.role]}</dd>
-              </div>
-              <div className="text-right">
-                <dt className="text-muted-foreground">Código público</dt>
-                <dd className="font-mono font-medium">{session.publicCode}</dd>
-              </div>
-            </dl>
+          <form action={logoutAction}>
+            <Button type="submit" variant="outline" className="w-full">
+              Cerrar sesión
+            </Button>
+          </form>
+        </div>
+      </aside>
 
-            <form action={logoutAction}>
-              <Button type="submit" variant="outline">
-                Cerrar sesión
-              </Button>
-            </form>
+      <div className="w-full min-w-0 lg:pl-64">
+        <header className="sticky top-0 z-40 border-b bg-background lg:hidden">
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <p className="shrink-0 text-sm font-semibold tracking-tight">Red de Referidos</p>
+
+            <div className="flex items-center gap-2">
+              <NotificationBadge session={session} />
+
+              <form action={logoutAction}>
+                <Button type="submit" variant="outline" className="h-8 px-3 text-xs">
+                  Cerrar sesión
+                </Button>
+              </form>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <div className="mx-auto max-w-5xl space-y-6 px-6 py-8">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
-          <p className="text-sm text-muted-foreground">{description}</p>
+        <div className="border-b bg-background lg:hidden">
+          <SidebarNav role={session.role} variant="bar" />
         </div>
 
-        <dl className="grid gap-4 sm:grid-cols-3">
-          <Fact label="Nombre" value={session.fullName} />
-          <Fact label="Rol" value={ROLE_LABEL[session.role]} />
-          <Fact label="Código público" value={session.publicCode} mono />
-        </dl>
+        <main className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+            <p className="text-sm text-muted-foreground">{description}</p>
+          </div>
 
-        {children}
+          {children}
+        </main>
       </div>
-    </main>
-  );
-}
-
-function Fact({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="rounded-lg border bg-background p-4">
-      <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={`mt-1 text-sm font-medium ${mono ? "font-mono" : ""}`}>{value}</dd>
     </div>
   );
 }

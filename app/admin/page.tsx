@@ -52,44 +52,6 @@ export default async function AdminPage({ searchParams }: { searchParams: Search
       title="Panel de administración"
       description="Todos los aportes de la red: métricas de la semana, gráficas y accesos a la tabla maestra y al cumplimiento. Solo staff."
     >
-      <nav className="grid gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        <NavCard
-          href="/admin/pagos"
-          title="Pagos"
-          description="Tabla maestra con doce filtros, acciones en lote y exportación."
-        />
-        <NavCard
-          href="/admin/cumplimiento"
-          title="Cumplimiento"
-          description="Matriz persona × semana: aprobado, pendiente, incumplido o exento."
-        />
-        <NavCard
-          href="/admin/revisiones"
-          title="Revisión"
-          description="Aprueba o rechaza los aportes pendientes de la semana."
-        />
-        <NavCard
-          href="/admin/reportes"
-          title="Reportes"
-          description="Planilla consolidada con impresión y exportación."
-        />
-        <NavCard
-          href="/admin/metodos-pago"
-          title="Métodos de pago"
-          description="Catálogo de métodos: etiquetas, instrucciones, requisitos y orden."
-        />
-        <NavCard
-          href="/admin/campos-personalizados"
-          title="Campos personalizados"
-          description="Datos extra de miembros y reportes, con previsualización del formulario."
-        />
-        <NavCard
-          href="/admin/configuracion"
-          title="Configuración"
-          description="Ajustes del sistema con auditoría de cada cambio."
-        />
-      </nav>
-
       {overview === null ? (
         <p className="rounded-lg border border-dashed bg-background p-6 text-sm text-muted-foreground">
           {notice ?? "Todavía no hay semanas registradas."}
@@ -315,26 +277,6 @@ function Stat({ label, value, href }: { label: string; value: string; href?: str
     );
   }
   return <div className="rounded-lg border bg-background p-3">{content}</div>;
-}
-
-function NavCard({
-  href,
-  title,
-  description,
-}: {
-  href: string;
-  title: string;
-  description: string;
-}) {
-  return (
-    <Link
-      href={href}
-      className="rounded-lg border bg-background p-5 text-sm transition-colors hover:bg-muted/50"
-    >
-      <p className="font-medium text-foreground">{title}</p>
-      <p className="mt-1 text-muted-foreground">{description}</p>
-    </Link>
-  );
 }
 
 /** The effective overview, with the same graceful fallback as /admin/reportes. */

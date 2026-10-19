@@ -1466,3 +1466,23 @@ resuelve hacia lo más configurable (spec §18.7).
   página vacía. E2E re-verificado con las páginas nuevas. Si el volumen real
   supera 10.000 filas por exportación, la generación en background queda como
   deuda explícita.
+
+### D74 - Shell con menú lateral y ancho completo (post-F8)
+- Contexto: el usuario pidió una barra lateral que reúna todos los módulos y
+  que el contenido use todo el ancho de la pantalla; hasta F8 el shell centraba
+  el contenido en `max-w-5xl` y las opciones vivían como tarjetas dentro de
+  cada dashboard.
+- Decisión: `SessionShell` monta un `aside` fijo de 240 px (`w-64`) con marca,
+  rol, menú, identidad, badge de notificaciones y cierre de sesión. El área del
+  menú se deriva del PATH (no del rol): /portal muestra el menú del portal y el
+  resto el de administración, y la entrada de cruce entre áreas solo aparece
+  para staff. Las opciones se movieron desde /admin y /portal a
+  `components/sidebar-nav.tsx`. El contenido queda a ancho completo
+  (`px-4 sm:px-6 lg:px-8`, sin `max-w` ni `mx-auto`). En móvil, una barra
+  superior fija y un strip horizontal deslizable reemplazan al sidebar.
+- Archivos: `components/sidebar-nav.tsx` (nuevo), `components/session-shell.tsx`,
+  `app/admin/page.tsx`, `app/portal/page.tsx`.
+- Consecuencias: `/admin/reportes/imprimir` sigue deliberadamente SIN shell (no
+  cambia): es la página de impresión y el chrome de navegación no debe salir en
+  papel. El API de `SessionShell` no cambió, así que las 14 páginas que lo usan
+  no se tocaron.
