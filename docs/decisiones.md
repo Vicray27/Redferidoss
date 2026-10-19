@@ -1712,3 +1712,39 @@ resuelve hacia lo más configurable (spec §18.7).
   `toggleUserSelection`, `filterUserOptions`) carry the rules and are
   unit-tested.
 
+### D83 - Mobile-first admin and reporting
+- Context: the app was usable on phones but the payments module degenerated
+  into a 12-column table plus 16 stacked filters, and `/portal/semana` made a
+  member scroll past the whole attendance form to report an offering. Touch
+  targets were 16-36px and 14px inputs triggered iOS zoom.
+- Decision: below `md`, `/admin/pagos` renders one card per report (the same
+  data, checkbox and proof link as the table, which stays the `md+` view) and
+  the shared controls grow to 44px targets. The mobile header and the module
+  strip are one sticky block and the active strip item auto-scrolls into view.
+  Inputs use `text-base sm:text-sm` and cards `p-4 sm:p-6` on phones. The
+  person/weeks panels cap at `min(24rem, 60dvh)` with `overscroll-contain`, and
+  the multiple-picker no longer autofocuses (the keyboard would cover the
+  options). `/portal/semana` puts the two independent reports behind
+  "Aporte" / "Asistencia" tabs (D76 panels stay mounted); the offering tab is
+  the default only when no live report exists, so the first screen still asks
+  for the amount. Attendance uses full-width tap cards, counters get +/- 
+  steppers, and visitors/note collapse under "Más detalles". The payment form
+  uses the local `general.timezone` date instead of UTC, labels reference and
+  proof with the exact D43 rules, validates required fields before uploading,
+  shows built-in `fieldErrors` inline, and replaces itself with a confirmation
+  card when a PENDING/APPROVED report already exists for the cycle.
+- Files: `components/session-shell.tsx`, `components/sidebar-nav.tsx`,
+  `components/notification-badge.tsx`, `components/ui/form.tsx`,
+  `components/ui/multi-select.tsx`, `components/ui/confirm-dialog.tsx`,
+  `app/admin/pagos/{page,payments-table,user-picker}.tsx`,
+  `app/portal/semana/{page,payment-form,week-form,week-tabs}.tsx`,
+  `app/portal/invitations/invitations-client.tsx`,
+  `components/network/network-tree.tsx`, `components/notifications-inbox.tsx`.
+- Consequences: desktop markup and every server contract are unchanged; no
+  backend, test or E2E file moved. The portal history tables keep their
+  columns behind a horizontal scroll with explicit minimum widths. A member
+  with a live report sees the confirmation instead of a form the server would
+  reject anyway, and the E2E journey still finds `#pay-amount`,
+  `#pay-reference` and "Enviar aporte" on first load because it starts with no
+  report for the cycle.
+

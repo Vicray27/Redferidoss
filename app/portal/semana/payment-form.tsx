@@ -7,7 +7,8 @@
 // first (Server Action bodies cap at ~1 MB), and only its returned `key`
 // travels with the report action. The service re-checks window, amount mode
 // and proof/reference requirements — this form validates only what a typo
-// would break.
+// would break, never the business rules. Required fields are checked BEFORE
+// the upload so an invalid submission does not leave an orphan file.
 // =============================================================================
 
 import { useState, useTransition } from "react";
@@ -35,6 +36,24 @@ export interface PaymentMethodOption {
   requiresProof: boolean;
 }
 
+/** The PENDING/APPROVED report already filed for the current cycle. */
+export interface LivePaymentReport {
+  status: string;
+  amount: string;
+  currency: string;
+  method: string;
+  periodKey: string;
+}
+
+/** Fields the Server Action reports with these keys; everything else is custom. */
+const BUILT_IN_ERROR_FIELDS = new Set(["amount", "paidAt", "reference", "proof", "methodId"]);
+
+const STATUS_LABELS: Record<string, string> = {
+  PENDING: "Pendiente",
+  APPROVED: "Aprobado",
+  REJECTED: "Rechazado",
+};
+
 export function PaymentForm({
   methods,
   fields,
@@ -42,6 +61,10 @@ export function PaymentForm({
   amountMode,
   expectedAmount,
   editable,
+  today,
+  globalRequiresReference,
+  globalRequiresProof,
+  liveReport,
 }: {
   methods: PaymentMethodOption[];
   /** Active PAYMENT_REPORT custom fields (F6/D56), rendered by the same renderer. */
@@ -50,6 +73,11 @@ export function PaymentForm({
   amountMode: string | null;
   expectedAmount: string | null;
   editable: boolean;
+  /** Local date (YYYY-MM-DD) in `general.timezone`, never the browser's. */
+  today: string;
+  globalRequiresReference: boolean;
+  globalRequiresProof: boolean;
+  liveReport: LivePaymentReport | null;
 }) {
   const router = useRouter();
   const [busy, startTransition] = useTransition();
@@ -57,11 +85,13 @@ export function PaymentForm({
   const [amount, setAmount] = useState("");
   const [methodId, setMethodId] = useState(methods[0]?.id ?? "");
   const [reference, setReference] = useState("");
-  const [paidAt, setPaidAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [paidAt, setPaidAt] = useState(today);
   const [note, setNote] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   // The admin-defined defaults PREFILL the form (D56); the server still
   // validates whatever is submitted, defaults included.
   const [customValues, setCustomValues] = useState<Record<string, unknown>>(() =>
@@ -77,6 +107,9 @@ export function PaymentForm({
   const [customErrors, setCustomErrors] = useState<Record<string, string>>({});
 
   const selectedMethod = methods.find((method) => method.id === methodId) ?? null;
+  // D43: reference is required when BOTH flags are true; proof when EITHER is.
+  const referenceRequired = globalRequiresReference && (selectedMethod?.requiresReference ?? false);
+  const proofRequired = globalRequiresProof || (selectedMethod?.requiresProof ?? false);
 
   const amountHint =
     expectedAmount && currency
@@ -87,17 +120,52 @@ export function PaymentForm({
           : null
       : null;
 
+  const clearFieldError = (field: string) => {
+    setFieldErrors((current) => {
+      if (current[field] === undefined) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const clearFile = () => {
+    setFile(null);
+    // Remounting the native input is the only way to clear its internal value.
+    setFileInputKey((current) => current + 1);
+    clearFieldError("proof");
+  };
+
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage(null);
+    setFieldErrors({});
     setCustomErrors({});
 
-    if (amount.trim() === "" || Number(amount) <= 0) {
-      setMessage({ kind: "error", text: "Ingresa el monto del aporte." });
-      return;
+    // Validate before the upload step: an early return here is what keeps an
+    // invalid submission from storing a proof nobody references.
+    const errors: Record<string, string> = {};
+    if (amount.trim() === "" || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      errors.amount = "Ingresa un monto mayor que cero.";
     }
     if (methodId === "") {
-      setMessage({ kind: "error", text: "Elige un método de pago." });
+      errors.methodId = "Elige un método de pago.";
+    }
+    if (paidAt.trim() === "") {
+      errors.paidAt = "Indica la fecha del pago.";
+    } else if (paidAt > today) {
+      errors.paidAt = "La fecha del pago no puede estar en el futuro.";
+    }
+    if (referenceRequired && reference.trim() === "") {
+      errors.reference = "Ingresa la referencia del pago.";
+    }
+    if (proofRequired && file === null) {
+      errors.proof = "Adjunta el comprobante.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setMessage({ kind: "error", text: "Revisa los campos marcados." });
       return;
     }
 
@@ -143,7 +211,16 @@ export function PaymentForm({
 
       if (!result.ok) {
         setMessage({ kind: "error", text: result.message ?? "No se pudo enviar el aporte." });
-        setCustomErrors(result.fieldErrors ?? {});
+        const inline: Record<string, string> = {};
+        const custom: Record<string, string> = {};
+        for (const [field, text] of Object.entries(result.fieldErrors ?? {})) {
+          if (BUILT_IN_ERROR_FIELDS.has(field)) inline[field] = text;
+          else custom[field] = text;
+        }
+        if (Object.keys(inline).length > 0) {
+          setFieldErrors((current) => ({ ...current, ...inline }));
+        }
+        setCustomErrors(custom);
         return;
       }
 
@@ -155,6 +232,9 @@ export function PaymentForm({
       setReference("");
       setNote("");
       setFile(null);
+      setFileInputKey((current) => current + 1);
+      setFieldErrors({});
+      setCustomErrors({});
       // Back to the admin defaults, exactly like a fresh page load.
       setCustomValues(
         Object.fromEntries(
@@ -171,6 +251,49 @@ export function PaymentForm({
       router.refresh();
     });
   };
+
+  if (liveReport) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Reportar mi aporte</CardTitle>
+          <CardDescription>Ya registraste un aporte para esta semana.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <dl className="space-y-2 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">Monto</dt>
+              <dd className="font-medium">
+                {liveReport.amount} {liveReport.currency}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">Método</dt>
+              <dd>{liveReport.method}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">Estado</dt>
+              <dd>{STATUS_LABELS[liveReport.status] ?? liveReport.status}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">Semana</dt>
+              <dd>{liveReport.periodKey}</dd>
+            </div>
+          </dl>
+          {/* The post-submit confirmation survives the server refresh that
+              replaces the form with this card; E2E asserts this exact text. */}
+          {message ? (
+            <p
+              className={`mt-3 text-sm ${message.kind === "ok" ? "text-foreground" : "text-destructive"}`}
+              role={message.kind === "error" ? "alert" : "status"}
+            >
+              {message.text}
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!editable) {
     return (
@@ -197,7 +320,7 @@ export function PaymentForm({
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pay-amount">Monto</Label>
               <Input
@@ -207,10 +330,19 @@ export function PaymentForm({
                 step="0.01"
                 inputMode="decimal"
                 value={amount}
-                onChange={(event) => setAmount(event.target.value)}
+                aria-invalid={fieldErrors.amount ? true : undefined}
+                onChange={(event) => {
+                  setAmount(event.target.value);
+                  clearFieldError("amount");
+                }}
               />
               {amountHint ? (
                 <p className="text-xs text-muted-foreground">{amountHint}</p>
+              ) : null}
+              {fieldErrors.amount ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {fieldErrors.amount}
+                </p>
               ) : null}
             </div>
 
@@ -219,8 +351,16 @@ export function PaymentForm({
               <select
                 id="pay-method"
                 value={methodId}
-                onChange={(event) => setMethodId(event.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                aria-invalid={fieldErrors.methodId ? true : undefined}
+                onChange={(event) => {
+                  setMethodId(event.target.value);
+                  // Requirements depend on the method: a previous reference or
+                  // proof error may no longer apply after this change.
+                  clearFieldError("methodId");
+                  clearFieldError("reference");
+                  clearFieldError("proof");
+                }}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base aria-[invalid=true]:border-destructive sm:text-sm"
               >
                 {methods.length === 0 ? <option value="">Sin métodos activos</option> : null}
                 {methods.map((method) => (
@@ -229,20 +369,34 @@ export function PaymentForm({
                   </option>
                 ))}
               </select>
+              {fieldErrors.methodId ? (
+                <p className="text-xs text-destructive" role="alert">
+                  {fieldErrors.methodId}
+                </p>
+              ) : null}
             </div>
           </div>
 
           <div className="space-y-1">
             <Label htmlFor="pay-reference">
               Referencia del pago
-              {selectedMethod?.requiresReference ? " (obligatoria para este método)" : " (opcional)"}
+              {referenceRequired ? " (obligatoria para este método)" : " (opcional)"}
             </Label>
             <Input
               id="pay-reference"
               value={reference}
-              onChange={(event) => setReference(event.target.value)}
+              aria-invalid={fieldErrors.reference ? true : undefined}
+              onChange={(event) => {
+                setReference(event.target.value);
+                clearFieldError("reference");
+              }}
               placeholder="Número de referencia o código de la transacción."
             />
+            {fieldErrors.reference ? (
+              <p className="text-xs text-destructive" role="alert">
+                {fieldErrors.reference}
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-1">
@@ -251,23 +405,55 @@ export function PaymentForm({
               id="pay-date"
               type="date"
               value={paidAt}
-              max={new Date().toISOString().slice(0, 10)}
-              onChange={(event) => setPaidAt(event.target.value)}
+              max={today}
+              aria-invalid={fieldErrors.paidAt ? true : undefined}
+              onChange={(event) => {
+                setPaidAt(event.target.value);
+                clearFieldError("paidAt");
+              }}
             />
+            {fieldErrors.paidAt ? (
+              <p className="text-xs text-destructive" role="alert">
+                {fieldErrors.paidAt}
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-1">
             <Label htmlFor="pay-proof">
               Comprobante
-              {selectedMethod?.requiresProof ? " (obligatorio para este método)" : " (opcional)"}
+              {proofRequired ? " (obligatorio)" : " (opcional)"}
             </Label>
             <input
+              key={fileInputKey}
               id="pay-proof"
               type="file"
               accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              aria-invalid={fieldErrors.proof ? true : undefined}
+              onChange={(event) => {
+                setFile(event.target.files?.[0] ?? null);
+                clearFieldError("proof");
+              }}
               className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-sm"
             />
+            {file ? (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={clearFile}
+                  className="h-9 shrink-0 px-3"
+                >
+                  Quitar
+                </Button>
+              </div>
+            ) : null}
+            {fieldErrors.proof ? (
+              <p className="text-xs text-destructive" role="alert">
+                {fieldErrors.proof}
+              </p>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               JPG, PNG, WEBP o PDF, hasta 10 MB.
             </p>
@@ -281,7 +467,7 @@ export function PaymentForm({
               maxLength={2000}
               onChange={(event) => setNote(event.target.value)}
               rows={2}
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground"
+              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground sm:text-sm"
             />
           </div>
 
@@ -313,7 +499,7 @@ export function PaymentForm({
             </p>
           ) : null}
 
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy} className="min-h-11 w-full sm:w-auto">
             {uploading ? "Subiendo comprobante…" : busy ? "Enviando…" : "Enviar aporte"}
           </Button>
         </form>

@@ -1,7 +1,7 @@
 import { SessionShell } from "@/components/session-shell";
 import { requireSession } from "@/lib/auth/require";
 import { authorization, toActor } from "@/lib/authz";
-import { MS_PER_DAY, effectiveCycleStatus, isReportable } from "@/lib/cycles";
+import { MS_PER_DAY, effectiveCycleStatus, isReportable, localDateKey } from "@/lib/cycles";
 import { prisma } from "@/lib/db";
 import type { RegistrationField } from "@/lib/invitations";
 import { createPaymentsService } from "@/lib/payments";
@@ -10,6 +10,7 @@ import { createWeeklyReportsService } from "@/lib/weekly-reports";
 
 import { PaymentForm, type PaymentMethodOption } from "./payment-form";
 import { WeekForm, type WeekDefaults } from "./week-form";
+import { WeekTabs } from "./week-tabs";
 
 /**
  * Last-resort labels for the six `payment_method` enum codes. Since F6 the
@@ -95,11 +96,25 @@ export default async function WeekPage() {
     weekly.myReports(actor, { limit: 8 }),
   ]);
 
-  const [currency, amountMode, expectedAmount] = await Promise.all([
+  const [
+    currency,
+    amountMode,
+    expectedAmount,
+    timezone,
+    requiresReference,
+    requiresProof,
+  ] = await Promise.all([
     settings.get<string>("payments.currency"),
     settings.get<string>("payments.amount_mode"),
     settings.get<unknown>("payments.expected_amount"),
+    settings.getOrThrow<string>("general.timezone"),
+    settings.getOrThrow<boolean>("payments.require_reference"),
+    settings.getOrThrow<boolean>("payments.require_proof"),
   ]);
+
+  // "Today" is the global local date, not the server's UTC date: a payment
+  // dated in Caracas after 20:00 must not default to tomorrow.
+  const today = localDateKey(now, timezone);
 
   const cycle = cycles[0] ?? null;
   const statusInput = cycle
@@ -117,6 +132,10 @@ export default async function WeekPage() {
   const myWeeklyReport = cycle
     ? (weeklyHistory.find((row) => row.cycleId === cycle.id) ?? null)
     : null;
+  // A PENDING/APPROVED report is the live one for this cycle (D4): the form is
+  // replaced by a confirmation and no second submission is offered.
+  const livePayment =
+    myPaymentReports.find((row) => row.cycleId === cycle?.id && row.status !== "REJECTED") ?? null;
   const downline = cycle
     ? await weekly.downlineReports(actor, { cycleId: cycle.id, limit: 25 })
     : [];
@@ -178,17 +197,34 @@ export default async function WeekPage() {
         )}
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <WeekForm defaults={weeklyDefaults} editable={reportable} />
-        <PaymentForm
-          methods={methods}
-          fields={customFieldRows}
-          currency={currency}
-          amountMode={amountMode}
-          expectedAmount={expectedAmount === null ? null : String(expectedAmount)}
-          editable={reportable}
-        />
-      </div>
+      <WeekTabs
+        defaultTab={livePayment ? "asistencia" : "aporte"}
+        payment={
+          <PaymentForm
+            methods={methods}
+            fields={customFieldRows}
+            currency={currency}
+            amountMode={amountMode}
+            expectedAmount={expectedAmount === null ? null : String(expectedAmount)}
+            editable={reportable}
+            today={today}
+            globalRequiresReference={requiresReference}
+            globalRequiresProof={requiresProof}
+            liveReport={
+              livePayment
+                ? {
+                    status: livePayment.status,
+                    amount: livePayment.amount,
+                    currency: livePayment.currency,
+                    method: livePayment.method,
+                    periodKey: livePayment.periodKey,
+                  }
+                : null
+            }
+          />
+        }
+        week={<WeekForm defaults={weeklyDefaults} editable={reportable} />}
+      />
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold tracking-tight">Mis aportes</h2>
@@ -198,7 +234,7 @@ export default async function WeekPage() {
           </p>
         ) : (
           <div className="overflow-x-auto rounded-lg border bg-background">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-4 py-3 font-medium">Semana</th>
@@ -252,7 +288,7 @@ export default async function WeekPage() {
           </p>
         ) : (
           <div className="overflow-x-auto rounded-lg border bg-background">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-4 py-3 font-medium">Persona</th>
@@ -285,7 +321,14 @@ export default async function WeekPage() {
                     </td>
                     <td className="px-4 py-3">{row.cellAttendees}</td>
                     <td className="px-4 py-3">{row.cellNewVisitors}</td>
-                    <td className="px-4 py-3">{row.note ?? "—"}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className="block max-w-[220px] truncate"
+                        title={row.note ?? undefined}
+                      >
+                        {row.note ?? "—"}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -81,7 +81,22 @@ export function WeekForm({
   );
   const [visitorsText, setVisitorsText] = useState((defaults?.visitors ?? []).join("\n"));
   const [note, setNote] = useState(defaults?.note ?? "");
+  const [detailsOpen, setDetailsOpen] = useState(
+    Boolean(
+      defaults &&
+        (defaults.visitors.length > 0 ||
+          (defaults.note !== null && defaults.note.trim() !== "")),
+    ),
+  );
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+
+  const stepCounter = (key: CounterKey, delta: number) => {
+    setCounters((current) => {
+      const parsed = Number.parseInt(current[key], 10);
+      const value = Number.isFinite(parsed) ? parsed : 0;
+      return { ...current, [key]: String(Math.max(0, value + delta)) };
+    });
+  };
 
   const onSave = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -168,68 +183,99 @@ export function WeekForm({
       <CardContent>
         <form onSubmit={onSave} className="space-y-4">
           <div className="space-y-3">
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-h-11 items-center gap-3 rounded-lg border p-3 text-sm">
               <input
                 type="checkbox"
                 checked={attended}
                 onChange={(event) => setAttended(event.target.checked)}
-                className="h-4 w-4"
+                className="h-5 w-5"
               />
               Asistí a la reunión general
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-h-11 items-center gap-3 rounded-lg border p-3 text-sm">
               <input
                 type="checkbox"
                 checked={discipleshipAttended}
                 onChange={(event) => setDiscipleshipAttended(event.target.checked)}
-                className="h-4 w-4"
+                className="h-5 w-5"
               />
               Asistí al discipulado
             </label>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 sm:grid-cols-3">
             {COUNTER_FIELDS.map((field) => (
               <div key={field.key} className="space-y-1">
                 <Label htmlFor={`week-${field.key}`}>{field.label}</Label>
-                <Input
-                  id={`week-${field.key}`}
-                  type="number"
-                  min={0}
-                  step={1}
-                  inputMode="numeric"
-                  value={counters[field.key]}
-                  onChange={(event) =>
-                    setCounters((current) => ({ ...current, [field.key]: event.target.value }))
-                  }
-                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-label={`Restar ${field.label}`}
+                    onClick={() => stepCounter(field.key, -1)}
+                    className="h-9 w-9 shrink-0 p-0 text-base leading-none"
+                  >
+                    −
+                  </Button>
+                  <Input
+                    id={`week-${field.key}`}
+                    type="number"
+                    min={0}
+                    step={1}
+                    inputMode="numeric"
+                    value={counters[field.key]}
+                    onChange={(event) =>
+                      setCounters((current) => ({ ...current, [field.key]: event.target.value }))
+                    }
+                    className="text-center"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-label={`Sumar ${field.label}`}
+                    onClick={() => stepCounter(field.key, 1)}
+                    className="h-9 w-9 shrink-0 p-0 text-base leading-none"
+                  >
+                    +
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
 
-          <div className="space-y-1">
-            <Label htmlFor="week-visitors">Visitantes (un nombre por línea)</Label>
-            <textarea
-              id="week-visitors"
-              value={visitorsText}
-              onChange={(event) => setVisitorsText(event.target.value)}
-              rows={3}
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground"
-              placeholder="María Pérez&#10;Juan Gómez"
-            />
-          </div>
+          <details
+            open={detailsOpen}
+            onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+            className="space-y-3 rounded-md border p-3"
+          >
+            <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+              Más detalles (visitantes y nota)
+            </summary>
 
-          <div className="space-y-1">
-            <Label htmlFor="week-note">Nota (opcional)</Label>
-            <textarea
-              id="week-note"
-              value={note}
-              maxLength={NOTE_MAX_LENGTH}
-              onChange={(event) => setNote(event.target.value)}
-              rows={2}
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground"
-            />
-          </div>
+            <div className="space-y-1">
+              <Label htmlFor="week-visitors">Visitantes (un nombre por línea)</Label>
+              <textarea
+                id="week-visitors"
+                value={visitorsText}
+                onChange={(event) => setVisitorsText(event.target.value)}
+                rows={3}
+                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground sm:text-sm"
+                placeholder="María Pérez&#10;Juan Gómez"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="week-note">Nota (opcional)</Label>
+              <textarea
+                id="week-note"
+                value={note}
+                maxLength={NOTE_MAX_LENGTH}
+                onChange={(event) => setNote(event.target.value)}
+                rows={2}
+                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground sm:text-sm"
+              />
+            </div>
+          </details>
 
           {message ? (
             <p
@@ -240,7 +286,7 @@ export function WeekForm({
             </p>
           ) : null}
 
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy} className="min-h-11 w-full sm:w-auto">
             {busy ? "Guardando…" : "Guardar reporte"}
           </Button>
         </form>
