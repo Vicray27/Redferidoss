@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { SessionShell } from "@/components/session-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { requireStaffSession } from "@/lib/auth/require";
 import { authorization } from "@/lib/authz";
 import { formatCustomValue } from "@/lib/custom-fields";
@@ -189,22 +190,21 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
 
             <fieldset className="rounded-lg border bg-muted/10 p-4">
               <legend className="px-1 text-sm font-medium">Semanas</legend>
-              <select
+              <MultiSelect
                 name="cycles"
-                multiple
-                size={Math.min(Math.max(cycles.length, 1), 5)}
-                defaultValue={filters.cycles}
-                className="w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-              >
-                {cycles.map((option) => (
-                  <option key={option.id} value={option.periodKey}>
-                    {weekRangeLabel(option.startsAt, option.endsAt)}
-                  </option>
-                ))}
-              </select>
+                label="Semanas"
+                options={cycles.map((option) => ({
+                  value: option.periodKey,
+                  label: weekRangeLabel(option.startsAt, option.endsAt),
+                  secondary: option.periodKey,
+                }))}
+                selected={filters.cycles}
+                emptyLabel="Todas las semanas"
+                searchPlaceholder="Buscar semana…"
+                summaryNoun="semana"
+              />
               <p className="mt-1 text-[10px] text-muted-foreground">
-                Sin selección = todas las semanas. Mantén Ctrl (Windows) o Cmd (Mac) para elegir varias
-                semanas.
+                Elegí una o más semanas.
               </p>
             </fieldset>
           </div>
@@ -398,7 +398,7 @@ export default async function PaymentsAdminPage({ searchParams }: { searchParams
 
           <div className="flex flex-wrap items-center gap-2">
             <button type="submit" className={cn(buttonVariants(), "h-10")}>
-              Filtrar
+              Aplicar filtros
             </button>
             {hasActiveFilters(filters) ? (
               <Link href="/admin/pagos" className={cn(buttonVariants({ variant: "outline" }))}>
