@@ -23,13 +23,13 @@ pnpm db:validate          # prisma validate
 pnpm db:generate          # prisma generate -> cliente tipado
 pnpm db:check:drift       # compara schema.prisma contra todas las migraciones (exit 1 si hay drift)
 pnpm typecheck            # tsc --noEmit
-pnpm test                 # vitest run (882 tests, sin base de datos)
+pnpm test                 # vitest run (963 tests, sin base de datos)
 ```
 
 `pnpm db:check:drift` es la red de seguridad del DDL: verifica enums,
 tablas, columnas (nombre, tipo, nulabilidad), claves primarias e índices en
 AMBAS direcciones contra **todas** las migraciones (`0001_init` …
-`0005_mv_payment_weekly`), y exige que todo índice que solo existe en el SQL
+`0006_identity_login`), y exige que todo índice que solo existe en el SQL
 esté listado en el bloque "Indexes NOT redeclared here" del schema.
 
 `pnpm test` cubre el otro lado: `tests/settings-catalog.test.ts` deriva del
@@ -601,7 +601,7 @@ El shell de sesión muestra el badge de no leídas en ambos portales.
 ### Verificación local
 
 ```sh
-pnpm test        # 882 tests de unidad, sin base de datos
+pnpm test        # 963 tests de unidad, sin base de datos
 pnpm typecheck
 pnpm db:check:drift
 ```
@@ -640,7 +640,7 @@ base descartable y la bandeja de notificaciones con paginación keyset
 ### Verificación local
 
 ```sh
-pnpm test             # 882 tests de unidad, sin base de datos
+pnpm test             # 963 tests de unidad, sin base de datos
 pnpm test:coverage    # umbral 80 % en 4 métricas sobre lib/** (actual: 86,25 % líneas / 91,21 % ramas)
 pnpm test:e2e         # viaje completo en base descartable (detener antes pnpm dev)
 pnpm typecheck
