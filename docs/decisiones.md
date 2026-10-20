@@ -1778,3 +1778,34 @@ resuelve hacia lo más configurable (spec §18.7).
   fidelity depends on the browser honoring `print-color-adjust`; Chrome and
   Edge do.
 
+### D85 - Mobile hamburger drawer and labeled dashboard week
+- Context: D83 left the mobile shell with a horizontally scrollable module
+  strip under the header. With nine admin modules it hid most destinations,
+  duplicated the desktop menu as a second landmark, and pushed the active item
+  around with `scrollIntoView`. The admin dashboard still rendered the only
+  operator-facing week select with a raw `periodKey · DD/MM/YYYY` option text
+  and a 12px label, unlike the D77/D79 labeled week controls on the other
+  admin pages.
+- Decision: below `lg`, the sticky header now carries a 44px hamburger that
+  opens a left slide-over drawer. The drawer reuses the `ConfirmDialog`
+  mechanics with no dialog dependency: unmounted while closed, focus trap,
+  initial focus on close, Escape, backdrop-only mousedown, body scroll lock,
+  focus restore and dismissal on route change. The server shell passes the
+  identity block and the sign-out form as server-rendered slots, so
+  `NotificationBadge` and `logoutAction` stay on the server; the header keeps a
+  single badge and the strip is gone. `SidebarNav` now renders `list` on
+  desktop and `drawer` inside the menu (44px rows, primary-tinted active item)
+  and accepts `onNavigate`. The dashboard week form becomes a labeled
+  `fieldset`/`legend` card with `weekRangeLabel` options, a "Semana aplicada"
+  select, a "Semanas en las gráficas" window select and a mobile-first grid;
+  the GET names (`cycle`, `semanas`), server fallback and chart window are
+  untouched.
+- Files: `components/mobile-menu.tsx`, `components/session-shell.tsx`,
+  `components/sidebar-nav.tsx`, `app/admin/page.tsx`, `app/globals.css`,
+  `e2e/admin-pages.spec.ts`.
+- Consequences: desktop navigation is unchanged; a closed drawer leaves no
+  second "Módulos" landmark, and the E2E suite now proves the drawer opens,
+  navigates, dismisses itself and closes with Escape at 390x844, plus the
+  labeled dashboard week group. The drawer sits inside the sticky header's
+  z-40 stacking context, so dialogs and toasts (z-50) still paint above it.
+

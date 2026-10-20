@@ -13,7 +13,7 @@ import { createDashboardService, type DashboardOverview, type DashboardService }
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
 import { formatAmount, parseAmount } from "@/lib/money";
-import { createReportsService, dateLabel, type CycleOption } from "@/lib/reports";
+import { createReportsService, weekRangeLabel, type CycleOption } from "@/lib/reports";
 import { settings } from "@/lib/settings";
 
 // =============================================================================
@@ -103,36 +103,53 @@ function Overview({
         </p>
       ) : null}
 
-      <form method="get" className="flex flex-wrap items-end gap-3">
-        <label className="text-sm">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">Semana</span>
-          <select
-            name="cycle"
-            defaultValue={cycle.periodKey}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            {options.map((option) => (
-              <option key={option.id} value={option.periodKey}>
-                {option.periodKey} · {dateLabel(option.startsAt)} – {dateLabel(option.endsAt)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">Periodo</span>
-          <select
-            name="semanas"
-            defaultValue={String(weeks)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="12">12 semanas</option>
-            <option value="26">26 semanas</option>
-            <option value="52">52 semanas</option>
-          </select>
-        </label>
-        <Button type="submit" variant="outline">
-          Aplicar filtros
-        </Button>
+      <form method="get" className="rounded-lg border bg-muted/10 p-4">
+        <fieldset className="min-w-0">
+          <legend className="px-1 text-sm font-medium">Semana</legend>
+
+          <div className="mt-2 space-y-3 sm:grid sm:grid-cols-[minmax(0,1fr)_14rem_auto] sm:items-end sm:gap-3 sm:space-y-0">
+            <label className="block text-sm">
+              <span className="mb-1 block text-xs font-medium text-muted-foreground">
+                Semana aplicada
+              </span>
+              <select
+                name="cycle"
+                defaultValue={cycle.periodKey}
+                className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+              >
+                {options.map((option) => (
+                  <option key={option.id} value={option.periodKey}>
+                    {weekRangeLabel(option.startsAt, option.endsAt)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block text-sm">
+              <span className="mb-1 block text-xs font-medium text-muted-foreground">
+                Semanas en las gráficas
+              </span>
+              <select
+                name="semanas"
+                defaultValue={String(weeks)}
+                className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+              >
+                <option value="12">12 semanas</option>
+                <option value="26">26 semanas</option>
+                <option value="52">52 semanas</option>
+              </select>
+            </label>
+
+            <Button type="submit" variant="outline" className="min-h-11 w-full sm:w-auto">
+              Aplicar filtros
+            </Button>
+          </div>
+
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Mostrando {weekRangeLabel(cycle.startsAt, cycle.endsAt)} · {weeks} semanas en las
+            gráficas.
+          </p>
+        </fieldset>
       </form>
 
       <section aria-label="Indicadores de la semana" className="grid grid-cols-2 gap-3 lg:grid-cols-4">

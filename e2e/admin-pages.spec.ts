@@ -42,3 +42,44 @@ test("pagos y reportes renderizan sin error de servidor", async ({ browser }) =>
     await context.close();
   }
 });
+
+test("el panel identifica la semana y el menú móvil navega y cierra", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+
+  try {
+    // ---- Root signs in ---------------------------------------------------
+    await page.goto("/login");
+    await page.fill("#email", E2E_ROOT_EMAIL);
+    await page.fill("#password", E2E_ROOT_PASSWORD);
+    await page.getByRole("button", { name: "Entrar" }).click();
+    await page.waitForURL((url) => !url.pathname.startsWith("/login"));
+
+    // ---- The week control is a labeled group, not a bare select ----------
+    await page.goto("/admin");
+    await expect(page.getByRole("group", { name: "Semana" })).toBeVisible();
+    // `exact` keeps the label apart from the helper sentence that repeats the
+    // same words in lowercase ("... 12 semanas en las gráficas").
+    await expect(page.getByText("Semanas en las gráficas", { exact: true })).toBeVisible();
+
+    // ---- The hamburger opens the drawer with the module menu -------------
+    await page.getByRole("button", { name: "Abrir menú" }).click();
+    const drawer = page.getByRole("dialog", { name: "Menú de navegación" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole("navigation", { name: "Módulos" })).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "Cerrar sesión" })).toBeVisible();
+
+    // ---- A drawer link navigates and dismisses the drawer ----------------
+    await drawer.getByRole("link", { name: "Pagos", exact: true }).click();
+    await page.waitForURL(/\/admin\/pagos$/);
+    await expect(drawer).toBeHidden();
+
+    // ---- Escape dismisses it too -----------------------------------------
+    await page.getByRole("button", { name: "Abrir menú" }).click();
+    await expect(drawer).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(drawer).toBeHidden();
+  } finally {
+    await context.close();
+  }
+});

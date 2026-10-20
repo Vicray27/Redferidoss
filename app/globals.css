@@ -44,8 +44,8 @@
 }
 
 /*
- * Toast/dialog entrances: a short slide-fade that only touches opacity and
- * transform. The elements pair these classes with `motion-reduce:animate-none`,
+ * Toast/dialog/drawer entrances: a short slide-fade that only touches opacity
+ * and transform. The elements pair these classes with `motion-reduce:animate-none`,
  * so reduced-motion users get the final state immediately.
  */
 @keyframes toast-in {
@@ -70,6 +70,24 @@
   }
 }
 
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @layer utilities {
   .animate-toast-in {
     animation: toast-in 180ms ease-out;
@@ -77,5 +95,13 @@
 
   .animate-dialog-in {
     animation: dialog-in 160ms ease-out;
+  }
+
+  .animate-drawer-in {
+    animation: drawer-in 180ms ease-out;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 160ms ease-out;
   }
 }
