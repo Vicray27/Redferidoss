@@ -18,8 +18,11 @@ import writeXlsxFile from "write-excel-file/node";
 import { parseQuery, requireApiSession, withApi } from "@/lib/api";
 import { authorization } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { buildPresentationSheet, EXPORT_BRAND, exportStampLabel } from "@/lib/export-presentation";
 import {
   createReportsService,
+  dateLabel,
+  sharedCurrencyLabel,
   sheetCsv,
   sheetFileName,
   sheetMatrix,
@@ -56,17 +59,34 @@ export async function GET(request: Request): Promise<Response> {
       return new Response(bytes, { status: 200, headers: { ...headers, "Content-Type": CSV_MIME } });
     }
 
-    const buffer = await writeXlsxFile(
-      [
-        matrix.headers.map((header) => ({ value: header, fontWeight: "bold" as const })),
-        ...matrix.rows,
-      ],
-      {
-        sheet: "Planilla",
-        orientation: "landscape",
-        columns: SHEET_COLUMN_WIDTHS.map((width) => ({ width })),
-      },
-    ).toBuffer();
+    const { totals } = sheet;
+    const currency = sharedCurrencyLabel(sheet);
+    const money = (amount: string) => (currency ? `${amount} ${currency}` : amount);
+    const presentation = buildPresentationSheet({
+      title: `${EXPORT_BRAND.name} — Planilla consolidada`,
+      subtitle:
+        `Semana ${sheet.cycle.periodKey} · Del ${dateLabel(sheet.cycle.startsAt)}` +
+        ` al ${dateLabel(sheet.cycle.endsAt)} · Generada el ${exportStampLabel(new Date())}`,
+      summary:
+        `Personas: ${totals.people} · Reportaron: ${totals.reported}` +
+        ` · No reportaron: ${totals.notReported} · Asistieron: ${totals.attended}` +
+        ` · Ofrendaron: ${totals.offered} · Total reportado: ${money(totals.amountTotal)}` +
+        ` · Aprobado: ${money(totals.amountApproved)} · Visitantes: ${totals.visitors}`,
+      headers: matrix.headers,
+      rows: matrix.rows,
+      widths: SHEET_COLUMN_WIDTHS,
+      numericColumns: [0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 18],
+      footer:
+        "Los montos no incluyen los aportes rechazados. Los totales son la suma exacta de las filas listadas.",
+    });
+
+    const buffer = await writeXlsxFile(presentation.data, {
+      sheet: "Planilla",
+      orientation: "landscape",
+      showGridLines: false,
+      stickyRowsCount: presentation.stickyRowsCount,
+      columns: presentation.columns,
+    }).toBuffer();
 
     // A fresh Uint8Array<ArrayBuffer>: a Node Buffer is a Uint8Array too, but
     // its ArrayBufferLike backing does not satisfy BodyInit under TS 5.7.

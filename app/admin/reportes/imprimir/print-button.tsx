@@ -9,7 +9,11 @@ import { Button } from "@/components/ui/button";
  */
 export function PrintButton() {
   return (
-    <Button type="button" onClick={() => window.print()}>
+    <Button
+      type="button"
+      onClick={() => window.print()}
+      className="bg-[#2e67ff] text-white hover:bg-[#2456d8]"
+    >
       Imprimir / Guardar PDF
     </Button>
   );

@@ -4,6 +4,7 @@ import { requireStaffSession } from "@/lib/auth/require";
 import { authorization } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
+import { exportStampLabel } from "@/lib/export-presentation";
 import {
   createReportsService,
   dateLabel,
@@ -30,7 +31,8 @@ export const dynamic = "force-dynamic";
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 const PAGE_STYLE = `
-@page { size: A4 landscape; margin: 10mm; }
+* { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+@page { size: A4 landscape; margin: 12mm; }
 @media print {
   body { background: white !important; }
   table { border-collapse: collapse; }
@@ -67,6 +69,16 @@ export default async function PrintReportPage({ searchParams }: { searchParams: 
   const { cycle, totals } = sheet;
   const currency = sharedCurrencyLabel(sheet);
   const money = (amount: string) => (currency ? `${amount} ${currency}` : amount);
+  const stats: Array<{ label: string; value: string | number }> = [
+    { label: "Personas", value: totals.people },
+    { label: "Reportaron", value: totals.reported },
+    { label: "No reportaron", value: totals.notReported },
+    { label: "Asistieron", value: totals.attended },
+    { label: "Ofrendaron", value: totals.offered },
+    { label: "Total reportado", value: money(totals.amountTotal) },
+    { label: "Aprobado", value: money(totals.amountApproved) },
+    { label: "Visitantes", value: totals.visitors },
+  ];
 
   return (
     <main className="min-h-screen bg-white px-8 py-6 text-foreground print:px-0 print:py-0">
@@ -79,26 +91,43 @@ export default async function PrintReportPage({ searchParams }: { searchParams: 
         <PrintButton />
       </div>
 
-      <header className="mb-4">
-        <h1 className="text-xl font-bold tracking-tight">
+      <header className="mb-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#2e67ff]">
+          RED DE REFERIDOS
+        </p>
+        <h1 className="mt-1 text-xl font-bold tracking-tight text-[#0e142b]">
           Planilla consolidada — {cycle.periodKey}
         </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Del {dateLabel(cycle.startsAt)} al {dateLabel(cycle.endsAt)} · Generada el {stampLabel(new Date())}
-        </p>
-        <p className="mt-2 text-sm">
-          Personas: <strong>{totals.people}</strong> · Reportaron: <strong>{totals.reported}</strong> ·
-          No reportaron: <strong>{totals.notReported}</strong> · Asistieron: <strong>{totals.attended}</strong> ·
-          Ofrendaron: <strong>{totals.offered}</strong> · Total reportado: <strong>{money(totals.amountTotal)}</strong> ·
-          Aprobado: <strong>{money(totals.amountApproved)}</strong> · Visitantes: <strong>{totals.visitors}</strong>
+        <p className="mt-1 text-sm text-[#0e142b]/70">
+          Del {dateLabel(cycle.startsAt)} al {dateLabel(cycle.endsAt)} · Generada el{" "}
+          {exportStampLabel(new Date())}
         </p>
       </header>
 
-      <table className="w-full border-collapse border border-black/30 text-left text-[10px] leading-tight">
+      <section className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {stats.map((stat) => (
+          <div
+            key={stat.label}
+            className="rounded-md border border-[#e7e4e4] bg-[#fcfcfc] px-2.5 py-1.5"
+          >
+            <p className="text-[9px] font-medium uppercase tracking-wide text-[#0e142b]/60">
+              {stat.label}
+            </p>
+            <p className="text-sm font-semibold text-[#0e142b]">{stat.value}</p>
+          </div>
+        ))}
+      </section>
+
+      <table className="w-full border-collapse border border-[#e7e4e4] text-left text-[10px] leading-tight">
         <thead>
-          <tr className="bg-black/5">
+          <tr>
             {matrix.headers.map((header) => (
-              <th key={header} className="border border-black/30 px-1.5 py-1 font-semibold">
+              <th
+                key={header}
+                className={`border border-[#e7e4e4] bg-[#2e67ff] px-1.5 py-1 font-semibold text-white ${
+                  header === "Monto" ? "text-right" : ""
+                }`}
+              >
                 {header}
               </th>
             ))}
@@ -106,9 +135,17 @@ export default async function PrintReportPage({ searchParams }: { searchParams: 
         </thead>
         <tbody>
           {matrix.rows.map((cells, rowIndex) => (
-            <tr key={sheet.rows[rowIndex]?.userId ?? rowIndex}>
+            <tr
+              key={sheet.rows[rowIndex]?.userId ?? rowIndex}
+              className={rowIndex % 2 === 1 ? "bg-[#f7f8fb]" : "bg-white"}
+            >
               {cells.map((cell, cellIndex) => (
-                <td key={cellIndex} className="border border-black/20 px-1.5 py-1">
+                <td
+                  key={cellIndex}
+                  className={`border border-[#e7e4e4] px-1.5 py-1 text-[#0e142b] ${
+                    matrix.headers[cellIndex] === "Monto" ? "text-right" : ""
+                  }`}
+                >
                   {cell}
                 </td>
               ))}
@@ -128,11 +165,4 @@ export default async function PrintReportPage({ searchParams }: { searchParams: 
       </footer>
     </main>
   );
-}
-
-/** `DD/MM/YYYY HH:MM` local, printed on the paper so two prints are comparable. */
-function stampLabel(date: Date): string {
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${dateLabel(date)} ${hours}:${minutes}`;
 }

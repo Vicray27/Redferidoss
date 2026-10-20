@@ -1748,3 +1748,33 @@ resuelve hacia lo más configurable (spec §18.7).
   `#pay-reference` and "Enviar aporte" on first load because it starts with no
   report for the cycle.
 
+### D84 - Branded export documents (XLSX and print)
+- Context: both Excel downloads carried the right matrix but opened as a bare
+  header row plus data, without identity, frozen context or a readable summary,
+  and the print/PDF face used browser-default black borders and a run-on stats
+  line.
+- Decision: a shared, pure `lib/export-presentation.ts` builds the branded
+  sheet for both XLSX routes: title, subtitle, optional summary, primary
+  (`#2e67ff`) header band with white bold wrapped text, zebra data rows, thin
+  `#e7e4e4` borders, column widths, a frozen header block and a footer. The
+  print page reuses the same palette and stamp, replaces the stats paragraph
+  with compact chips, repeats the blue header on paper and opts into
+  `print-color-adjust: exact`. Branding is literal (D81): the routes still do
+  not read settings, because `general.app_name` and `general.primary_color`
+  are not the live UI values and the narrow route mocks would break. CSV paths
+  stay untouched: RFC 4180 has no styling and remains the interchange format.
+  The payments summary says "Suma de las filas" and appears only when every
+  exported row shares one currency, because the set may include pending and
+  rejected reports.
+- Files: `lib/export-presentation.ts`,
+  `app/api/payments/export/route.ts`,
+  `app/api/admin/reports/export/route.ts`,
+  `app/admin/reportes/imprimir/page.tsx`,
+  `app/admin/reportes/imprimir/print-button.tsx`,
+  `tests/export-presentation.test.ts`.
+- Consequences: query params, auth, filenames, MIME types, caching headers,
+  row caps and the CSV bytes are unchanged; no dependency was added. The
+  workbook freezes through the header row and hides gridlines. Printed color
+  fidelity depends on the browser honoring `print-color-adjust`; Chrome and
+  Edge do.
+

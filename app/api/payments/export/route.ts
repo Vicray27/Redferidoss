@@ -21,6 +21,8 @@ import { parseQuery, requireApiSession, withApi } from "@/lib/api";
 import { authorization } from "@/lib/authz";
 import { createDashboardService } from "@/lib/dashboard";
 import { prisma } from "@/lib/db";
+import { buildPresentationSheet, EXPORT_BRAND, exportStampLabel } from "@/lib/export-presentation";
+import { addAmounts, formatAmount, parseAmount } from "@/lib/money";
 import {
   createPaymentsAdminService,
   parsePaymentsFilters,
@@ -64,6 +66,7 @@ export async function GET(request: Request): Promise<Response> {
 
     let rows;
     let fields: PaymentsExportField[];
+    const isSelection = query.ids !== undefined;
     if (query.ids !== undefined) {
       // The selection door validates the ids FIRST (a selection that parses to
       // nothing is a 400 before any statement — D51); only then are the column
@@ -98,20 +101,37 @@ export async function GET(request: Request): Promise<Response> {
       return new Response(bytes, { status: 200, headers: { ...headers, "Content-Type": CSV_MIME } });
     }
 
-    const buffer = await writeXlsxFile(
-      [
-        sheetHeaders.map((header) => ({ value: header, fontWeight: "bold" as const })),
-        ...sheetRows,
-      ],
-      {
-        sheet: "Pagos",
-        orientation: "landscape",
-        columns: [
-          ...PAYMENTS_COLUMN_WIDTHS.map((width) => ({ width })),
-          ...fields.map(() => ({ width: CUSTOM_COLUMN_WIDTH })),
-        ],
-      },
-    ).toBuffer();
+    const rowCount = rows.length;
+    // "Suma de las filas", never "total aprobado": the exported set may include
+    // pending and rejected reports, so the label must not imply otherwise.
+    const currencies = new Set(rows.map((row) => row.currency));
+    let summary = `Filas: ${rowCount}`;
+    if (rowCount > 0 && currencies.size === 1) {
+      const total = formatAmount(addAmounts(...rows.map((row) => parseAmount(row.amount))));
+      summary += ` · Suma de las filas: ${total} ${rows[0].currency}`;
+    }
+
+    const presentation = buildPresentationSheet({
+      title: `${EXPORT_BRAND.name} — Pagos`,
+      subtitle:
+        `${isSelection ? "Selección manual" : "Filtros aplicados"} (${rowCount} filas)` +
+        ` · Generado el ${exportStampLabel(new Date())}`,
+      summary,
+      headers: sheetHeaders,
+      rows: sheetRows,
+      widths: [...PAYMENTS_COLUMN_WIDTHS, ...fields.map(() => CUSTOM_COLUMN_WIDTH)],
+      numericColumns: [5, 7],
+      footer:
+        'Los montos son valores DECIMAL(14,2). Una celda "-" significa que el dato no está disponible.',
+    });
+
+    const buffer = await writeXlsxFile(presentation.data, {
+      sheet: "Pagos",
+      orientation: "landscape",
+      showGridLines: false,
+      stickyRowsCount: presentation.stickyRowsCount,
+      columns: presentation.columns,
+    }).toBuffer();
 
     // A fresh Uint8Array<ArrayBuffer>: a Node Buffer's ArrayBufferLike backing
     // does not satisfy BodyInit under TS 5.7.
