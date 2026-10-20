@@ -25,10 +25,14 @@
 // ANTI-ENUMERATION (A2, §13)
 // --------------------------
 // "email already registered" and "everything was fine" must be
-// indistinguishable to an anonymous caller: duplicate email returns the same
-// generic 409 as any other conflict. The email_target of a directed invitation
-// is enforced too, and the same generic error is returned when it does not
-// match — a probe learns nothing either way.
+// indistinguishable to an anonymous caller: a duplicate email, username or
+// cédula returns the same generic 409 as any other conflict. The email_target
+// of a directed invitation is enforced too, and the same generic error is
+// returned when it does not match — a probe learns nothing either way.
+//
+// D86: email is optional for an open/permanent invitation, but a directed
+// invitation still requires it, because the target address is what proves the
+// invite was meant for this person. Username and cédula are always required.
 //
 // All statements carry `/* @reg:… */` markers so tests can route a fake
 // client by intent, mirroring lib/invitations.ts.
@@ -43,6 +47,18 @@ import {
   isValidEmail,
   type CustomFieldRow,
 } from "./custom-fields";
+import {
+  isValidUsername,
+  isReservedUsername,
+  NATIONAL_ID_REQUIRED_MESSAGE,
+  NATIONAL_ID_TOO_LONG_MESSAGE,
+  normalizeEmail,
+  normalizeNationalId,
+  normalizeUsername,
+  USERNAME_FORMAT_MESSAGE,
+  USERNAME_REQUIRED_MESSAGE,
+  USERNAME_RESERVED_MESSAGE,
+} from "./identity";
 import {
   MAX_DEPTH_SETTING,
   type InvitationsService,
@@ -91,10 +107,12 @@ export class DepthLimitError extends AppError {
 export interface RegistrationInput {
   /** Permanent code or single-use token, exactly as it arrived in the form. */
   invite: string;
-  email: string;
+  /** Optional for open invites; required when the invitation names an address. */
+  email?: string | null;
+  username: string;
   password: string;
   fullName: string;
-  nationalId?: string | null;
+  nationalId: string;
   phone?: string | null;
   birthDate?: string | null;
   country?: string | null;
@@ -113,7 +131,9 @@ export interface RegistrationContext {
 export interface RegistrationResult {
   userId: string;
   publicCode: string;
-  email: string;
+  email: string | null;
+  username: string;
+  nationalId: string;
   fullName: string;
   status: "ACTIVE" | "PENDING";
   sponsorId: string;
@@ -200,8 +220,24 @@ export async function registerUser(
 ): Promise<RegistrationResult> {
   // --- cheap shape validation + hashing BEFORE the transaction --------------
   const fieldErrors: Record<string, string[]> = {};
-  const email = input.email.trim().toLowerCase();
-  if (!isValidEmail(email)) fieldErrors.email = ["Ingresa un correo válido."];
+  const email = input.email ? normalizeEmail(input.email) : null;
+  if (email !== null && !isValidEmail(email)) {
+    fieldErrors.email = ["Ingresa un correo válido."];
+  }
+  const username = normalizeUsername(input.username);
+  if (username === "") {
+    fieldErrors.username = [USERNAME_REQUIRED_MESSAGE];
+  } else if (!isValidUsername(username)) {
+    fieldErrors.username = [USERNAME_FORMAT_MESSAGE];
+  } else if (isReservedUsername(username)) {
+    fieldErrors.username = [USERNAME_RESERVED_MESSAGE];
+  }
+  const nationalId = normalizeNationalId(input.nationalId);
+  if (nationalId === "") {
+    fieldErrors.nationalId = [NATIONAL_ID_REQUIRED_MESSAGE];
+  } else if (nationalId.length > 40) {
+    fieldErrors.nationalId = [NATIONAL_ID_TOO_LONG_MESSAGE];
+  }
   // F8 (§18.3): the minimum comes from `security.password_min_length`, read
   // here as the server-side authority; the route schema enforces the same
   // value so the client error is per-field before this ever runs.
@@ -247,9 +283,13 @@ export async function registerUser(
       throw new AppError(404, "INVITE_INVALID", "Este enlace de invitación no es válido o ya no está disponible.");
     }
 
-    // A directed invitation only works for the email it was sent to.
-    if (invite.emailTarget && invite.emailTarget.trim().toLowerCase() !== email) {
-      throw new RegistrationConflictError("invitation email_target does not match");
+    // A directed invitation only works for the email it was sent to. Without
+    // an address on the form there is nothing to compare, so it fails closed.
+    if (invite.emailTarget) {
+      const target = normalizeEmail(invite.emailTarget);
+      if (email === null || target !== email) {
+        throw new RegistrationConflictError("invitation email_target does not match");
+      }
     }
 
     // R4 — depth cap (0 = unlimited). The child sits at sponsor.depth + 1.
@@ -261,14 +301,52 @@ export async function registerUser(
       throw new AppError(409, "REFERRAL_LIMIT_REACHED", "No hay cupos de referido disponibles en este momento.");
     }
 
-    // Email availability: pre-check for the common case, and the unique index
-    // as the race-proof backstop mapped below.
-    const emailRows = await tx.$queryRaw<Array<{ one: number }>>`
-      /* @reg:email-exists */
-      SELECT 1 AS one FROM users WHERE email = ${email}::citext LIMIT 1
+    // Identifier availability is cross-field: a username must not equal an
+    // existing email or cédula either, because the login query accepts all
+    // three in one field and an overlap would make both accounts ambiguous.
+    // The unique indexes remain the race-proof backstop; these pre-checks turn
+    // the common case into the same generic 409 as every other conflict.
+    // Skipped for email when the member registered without an address (D86);
+    // multiple NULL emails are allowed by the unique index.
+    if (email !== null) {
+      const emailRows = await tx.$queryRaw<Array<{ one: number }>>`
+        /* @reg:email-exists */
+        SELECT 1 AS one FROM users
+        WHERE email = ${email}::citext
+           OR username = ${email}::citext
+           OR upper(regexp_replace(national_id, '\\s+', '', 'g')) = ${email.toUpperCase()}
+        LIMIT 1
+      `;
+      if (emailRows.length > 0) {
+        throw new RegistrationConflictError("email already registered");
+      }
+    }
+
+    const usernameRows = await tx.$queryRaw<Array<{ one: number }>>`
+      /* @reg:username-exists */
+      SELECT 1 AS one FROM users
+      WHERE username = ${username}::citext
+         OR email = ${username}::citext
+         OR upper(regexp_replace(national_id, '\\s+', '', 'g')) = ${username.toUpperCase()}
+      LIMIT 1
     `;
-    if (emailRows.length > 0) {
-      throw new RegistrationConflictError("email already registered");
+    if (usernameRows.length > 0) {
+      throw new RegistrationConflictError("username already registered");
+    }
+
+    // Cédula availability compares the same normalised expression the login
+    // lookup uses, so "V 12.345.678" and "v12.345.678" collide here too, and
+    // the value cannot double as another member's username or email.
+    const nationalIdRows = await tx.$queryRaw<Array<{ one: number }>>`
+      /* @reg:national-id-exists */
+      SELECT 1 AS one FROM users
+      WHERE upper(regexp_replace(national_id, '\\s+', '', 'g')) = ${nationalId}
+         OR username = ${nationalId}::citext
+         OR email = ${nationalId}::citext
+      LIMIT 1
+    `;
+    if (nationalIdRows.length > 0) {
+      throw new RegistrationConflictError("national id already registered");
     }
 
     // Handle availability: random codes, retried on collision.
@@ -300,16 +378,17 @@ export async function registerUser(
       const rows = await tx.$queryRaw<InsertedUserRow[]>`
         /* @reg:insert-user */
         INSERT INTO users (
-          public_code, sponsor_id, email, password_hash, full_name,
+          public_code, sponsor_id, email, username, password_hash, full_name,
           national_id, phone, birth_date, country, state, city, address, status
         )
         VALUES (
           ${publicCode},
           ${locked.id}::uuid,
           ${email}::citext,
+          ${username}::citext,
           ${passwordHash},
           ${fullName},
-          ${emptyToNull(input.nationalId)},
+          ${nationalId},
           ${emptyToNull(input.phone)},
           ${emptyToNull(input.birthDate)}::date,
           ${emptyToNull(input.country)},
@@ -325,7 +404,9 @@ export async function registerUser(
       inserted = row;
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new RegistrationConflictError("unique violation on insert (email or public_code)");
+        throw new RegistrationConflictError(
+          "unique violation on insert (email, username, national_id or public_code)",
+        );
       }
       throw error;
     }
@@ -421,6 +502,8 @@ export async function registerUser(
       userId: inserted.id,
       publicCode: inserted.publicCode,
       email,
+      username,
+      nationalId,
       fullName,
       status,
       sponsorId: locked.id,

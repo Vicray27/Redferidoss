@@ -23,10 +23,25 @@
 // Empty strings are ALLOWED for the optional profile fields: the form sends
 // what the HTML form holds, and `emptyToNull` in lib/registration.ts is the
 // single place that decides "" means NULL.
+//
+// D86: username is required and lower-cased before validation, national id is
+// required, and email is optional (empty string or omitted). A directed
+// invitation still needs an address; that rule belongs to the service, which
+// knows the invitation, not to this shared shape.
 // =============================================================================
 
 import { z } from "zod";
 
+import { isValidEmail } from "./custom-fields";
+import {
+  isReservedUsername,
+  NATIONAL_ID_REQUIRED_MESSAGE,
+  NATIONAL_ID_TOO_LONG_MESSAGE,
+  USERNAME_FORMAT_MESSAGE,
+  USERNAME_PATTERN,
+  USERNAME_REQUIRED_MESSAGE,
+  USERNAME_RESERVED_MESSAGE,
+} from "./identity";
 import { PASSWORD_MIN_LENGTH_FLOOR } from "./security-settings";
 
 /**
@@ -54,11 +69,24 @@ export function createRegisterCoreSchema(
       .max(128, "El enlace de invitación no es válido"),
 
     email: z
-      .string({ error: "El correo es obligatorio" })
+      .string({ error: "Ingresa un correo válido, por ejemplo nombre@dominio.com" })
       .trim()
-      .min(1, "El correo es obligatorio")
       .max(254, "El correo es demasiado largo")
-      .email("Ingresa un correo válido, por ejemplo nombre@dominio.com"),
+      .refine(
+        (value) => value === "" || isValidEmail(value),
+        "Ingresa un correo válido, por ejemplo nombre@dominio.com",
+      )
+      .optional(),
+
+    username: z
+      .string({ error: USERNAME_REQUIRED_MESSAGE })
+      .trim()
+      .toLowerCase()
+      .min(1, USERNAME_REQUIRED_MESSAGE)
+      .min(3, USERNAME_FORMAT_MESSAGE)
+      .max(30, USERNAME_FORMAT_MESSAGE)
+      .regex(USERNAME_PATTERN, USERNAME_FORMAT_MESSAGE)
+      .refine((value) => !isReservedUsername(value), USERNAME_RESERVED_MESSAGE),
 
     password: z
       .string({ error: "La contraseña es obligatoria" })
@@ -74,7 +102,11 @@ export function createRegisterCoreSchema(
       .min(2, "Ingresa tu nombre completo")
       .max(120, "El nombre es demasiado largo"),
 
-    nationalId: z.string().trim().max(40, "El documento es demasiado largo").optional(),
+    nationalId: z
+      .string({ error: NATIONAL_ID_REQUIRED_MESSAGE })
+      .trim()
+      .min(1, NATIONAL_ID_REQUIRED_MESSAGE)
+      .max(40, NATIONAL_ID_TOO_LONG_MESSAGE),
     phone: z.string().trim().max(40, "El teléfono es demasiado largo").optional(),
     birthDate: z
       .union([

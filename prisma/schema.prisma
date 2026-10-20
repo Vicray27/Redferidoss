@@ -68,13 +68,14 @@
 // ---------------------------------------------------------------------------
 // Unsupported("citext") is NOT queryable through Prisma Client (F2 impact)
 // ---------------------------------------------------------------------------
-// `users.email` and `invitations.email_target` are CITEXT columns.
-// Unsupported fields are excluded from the generated client model, so they
-// cannot appear in `where`/`create`/`select`. Consequences, deliberately
-// accepted in F1 and to be settled before F2 auth:
-//   * lookup by email cannot use `prisma.user.findUnique` -> needs
-//     $queryRaw or a follow-up mapping decision;
-//   * `prisma.user.create()` cannot supply the NOT NULL email column.
+// `users.email`, `users.username` and `invitations.email_target` are CITEXT
+// columns. Unsupported fields are excluded from the generated client model, so
+// they cannot appear in `where`/`create`/`select`. Consequences, deliberately
+// accepted in F1 and settled by D14/D86 for auth:
+//   * lookup by email/username cannot use `prisma.user.findUnique` -> needs
+//     $queryRaw with explicit ::citext casts (lib/users.ts);
+//   * `prisma.user.create()` cannot supply either column -> registration and
+//     the seed use parameterised INSERTs.
 // Do not "fix" it by switching to `String @db.Text`: that trades a real drift
 // for a real bug — Prisma would type the column as `text` and silently lose
 // the case-insensitive comparison the CITEXT column provides.
@@ -155,7 +156,12 @@ model User {
   depth                Int          @default(0)
   role                 user_role    @default(MEMBER)
   /// CITEXT: case-insensitive uniqueness (uq_users_email) is enforced in SQL.
-  email                Unsupported("citext")
+  /// Optional since 0006/identity: invitations may register a member without
+  /// an address (D86). Legacy users all keep theirs; there is no backfill.
+  email                Unsupported("citext")?
+  /// CITEXT membership handle, lower-case by CHECK. Unique via uq_users_username.
+  /// Null for every legacy user (no backfill).
+  username             Unsupported("citext")?
   emailVerifiedAt      DateTime?    @map("email_verified_at") @db.Timestamptz(6)
   passwordHash         String       @map("password_hash") @db.Text
   fullName             String       @map("full_name") @db.Text
@@ -193,6 +199,7 @@ model User {
   weeklyReports        WeeklyReport[]
 
   @@unique([email], map: "uq_users_email")
+  @@unique([username], map: "uq_users_username")
   @@unique([publicCode], map: "uq_users_public_code")
   @@unique([nationalId], map: "uq_users_national_id")
   @@map("users")

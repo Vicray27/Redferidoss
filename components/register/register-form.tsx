@@ -5,9 +5,9 @@
 //
 // Two validation layers, intentionally different in kind:
 //
-//   * the BASE fields (name, email, password, profile) go through
-//     react-hook-form + `registerCoreSchema`, the same definition the route
-//     handler validates against — one source of truth, no drift;
+//   * the BASE fields (name, username, cédula, email, password, profile) go
+//     through react-hook-form + `registerCoreSchema`, the same definition the
+//     route handler validates against — one source of truth, no drift;
 //   * the CUSTOM fields are dynamic (they live in `custom_fields`) and are
 //     checked by the mirrored per-field rules in
 //     components/dynamic-form/build-zod-schema.ts, which the server then
@@ -104,6 +104,7 @@ export function RegisterForm({
     resolver: zodResolver(schema),
     mode: "onSubmit",
     defaultValues: {
+      username: "",
       email: "",
       password: "",
       fullName: "",
@@ -207,15 +208,36 @@ export function RegisterForm({
           />
 
           <CoreField
+            id="username"
+            label="Usuario"
+            error={errors.username?.message}
+            disabled={isSubmitting}
+            registration={register("username")}
+            autoComplete="username"
+            placeholder="juan.perez"
+            hint="Así te encontrarán en la red. Minúsculas, números, punto, guion o guion bajo."
+          />
+
+          <CoreField
+            id="nationalId"
+            label="Cédula"
+            error={errors.nationalId?.message}
+            disabled={isSubmitting}
+            registration={register("nationalId")}
+            placeholder="V-12345678"
+            hint="También podrás usarla para iniciar sesión."
+          />
+
+          <CoreField
             id="email"
-            label="Correo electrónico"
+            label="Correo electrónico (opcional)"
             type="email"
             error={errors.email?.message}
             disabled={isSubmitting}
             registration={register("email")}
-            autoComplete="username"
+            autoComplete="email"
             placeholder="nombre@dominio.com"
-            hint="Con este correo ingresarás al portal."
+            hint="Puedes ingresar con tu correo, cédula o usuario."
           />
 
           <CoreField
@@ -247,14 +269,6 @@ export function RegisterForm({
               Datos opcionales
             </summary>
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
-              <CoreField
-                id="nationalId"
-                label="Documento"
-                error={errors.nationalId?.message}
-                disabled={isSubmitting}
-                registration={register("nationalId")}
-                compact
-              />
               <CoreField
                 id="phone"
                 label="Teléfono"
@@ -333,6 +347,7 @@ export function RegisterForm({
 
 const CORE_FIELDS = new Set([
   "email",
+  "username",
   "password",
   "fullName",
   "nationalId",

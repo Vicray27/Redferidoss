@@ -1809,3 +1809,54 @@ resuelve hacia lo más configurable (spec §18.7).
   labeled dashboard week group. The drawer sits inside the sticky header's
   z-40 stacking context, so dialogs and toasts (z-50) still paint above it.
 
+### D86 - One login field and a required identity: email, cédula or username
+- Context: members had to log in with an email, but email is not guaranteed to
+  exist for every person and is not the identifier the community uses in
+  practice. The invitation flow also needed a stable, human-readable handle,
+  and the existing `users.national_id` was optional and compared as raw text,
+  so "V 12.345.678" and "v12.345.678" were different keys. Changing either
+  rule had to preserve every existing account: 1,887 users already have an
+  email, none have a username, and only the root has a national id.
+- Decision: (1) The login form has ONE `identifier` field. The repository
+  resolves it with one parameterised query matching `email`, `username` or
+  the whitespace-stripped, upper-cased national id, and returns at most two
+  rows. Two matches mean the identifier is ambiguous and the login is refused;
+  the query never silently picks one account. (2) Normalisation is canonical
+  in `lib/identity.ts`: email and username trim/lower-case, national id trims,
+  removes internal whitespace and upper-cases while preserving letters and
+  hyphens. The same national-id expression runs in SQL. (3) The login throttle
+  key hashes the normalised identifier under the `login:` prefix, so case and
+  whitespace variants share a bucket and the key stores no PII. (4) Registration now requires
+  a username and a cédula; email is optional for open/permanent invitations,
+  but a directed invitation still fails closed unless the submitted, normalised
+  email matches `email_target`. Usernames are 3–30 lower-case `[a-z0-9._-]`
+  characters; `admin`, `root`, `superadmin`, `sistema`, `soporte`, `api` and
+  `www` are reserved. Duplicate email, username or cédula all return the same
+  generic 409, and the availability pre-checks are cross-field so a new handle
+  cannot collide with another member's email or cédula. (5) Migration `0006_identity_login` is additive and has NO
+  backfill: `email` drops `NOT NULL`, `username CITEXT NULL` is added with a
+  named unique index and a CHECK mirroring the app pattern. Legacy members
+  keep logging in with their email and are never assigned a username behind
+  their back. (6) `scripts/set-password.ts` accepts `AUTH_USER_IDENTIFIER`
+  (email, cédula or username) and keeps `AUTH_USER_EMAIL` as a compatibility
+  fallback; the update targets the resolved primary key so it cannot reopen an
+  ambiguity. (7) `scripts/check-schema-drift.mjs` learned to read additive
+  `ALTER TABLE ... ADD COLUMN` and `ALTER COLUMN ... DROP/SET NOT NULL`
+  statements, because the mirror now spans more than `CREATE TABLE`.
+- Files: `prisma/migrations/0006_identity_login/migration.sql`,
+  `prisma/schema.prisma`, `lib/identity.ts`, `lib/users.ts`,
+  `lib/auth/{schema,login,deps,rate-limit,actions}.ts`,
+  `app/login/login-form.tsx`, `lib/register-schema.ts`,
+  `lib/registration.ts`, `components/register/register-form.tsx`,
+  `scripts/set-password.ts`, `scripts/check-schema-drift.mjs`,
+  `tests/{auth-schema,auth-login,auth-deps,auth-rate-limit,users,register-schema,registration,set-password}.test.ts`,
+  `e2e/{db-target,journey,admin-pages}.spec.ts`, `README.md`.
+- Consequences: existing accounts keep working through their email; new
+  members can register without an address but must carry a username and
+  cédula; the same person can sign in with any of the three forms. Ambiguous
+  identifiers fail closed instead of authenticating the wrong account. The
+  unique CITEXT index allows multiple NULL usernames for the legacy rows and
+  starts enforcing handles for new ones. `pnpm typecheck`, the 963 unit tests
+  and the E2E suite (3/3, including a fresh database migrated through 0006)
+  pass; the migration was applied to the throwaway E2E database only.
+

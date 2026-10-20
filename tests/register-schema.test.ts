@@ -6,6 +6,9 @@
 // also what the user sees. The F8 change pinned by these tests is the factory:
 // `security.password_min_length` may only RAISE the §6 floor, and the message
 // must name the configured value instead of the constant.
+//
+// D86 adds the identity rules: username required (lower-cased), cédula
+// required, email optional.
 // =============================================================================
 
 import { describe, expect, it } from "vitest";
@@ -21,6 +24,8 @@ function validInput(overrides: Record<string, unknown> = {}) {
   return {
     invite: "demo-invite-token",
     email: "ana@example.com",
+    username: "ana.perez",
+    nationalId: "V-12345678",
     password: "clave-larga-123",
     fullName: "Ana Pérez",
     ...overrides,
@@ -72,6 +77,103 @@ describe("createRegisterCoreSchema — password floor (F8, §18.3)", () => {
   });
 });
 
+describe("register schema — identity fields (D86)", () => {
+  it("lower-cases and trims the username", () => {
+    const result = registerCoreSchema.safeParse(validInput({ username: "  Ana.Perez  " }));
+    expect(result.success).toBe(true);
+    expect(result.data?.username).toBe("ana.perez");
+  });
+
+  it("accepts the documented username alphabet", () => {
+    for (const username of ["ana", "ana.perez", "ana_perez", "ana-perez", "ana123"]) {
+      expect(registerCoreSchema.safeParse(validInput({ username })).success).toBe(true);
+    }
+  });
+
+  it("requires a username", () => {
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ username: "" })))).toBe(
+      "El usuario es obligatorio.",
+    );
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ username: "   " })))).toBe(
+      "El usuario es obligatorio.",
+    );
+  });
+
+  it("rejects usernames outside 3–30 legal characters with one clear message", () => {
+    const message =
+      "El usuario debe tener entre 3 y 30 caracteres: minúsculas, números, punto, guion o guion bajo.";
+
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ username: "ab" })))).toBe(message);
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ username: "a".repeat(31) })))).toBe(
+      message,
+    );
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ username: "ana perez" })))).toBe(
+      message,
+    );
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ username: "ana@perez" })))).toBe(
+      message,
+    );
+  });
+
+  it("rejects reserved handles", () => {
+    for (const username of ["admin", "ROOT", "Sistema", "soporte"]) {
+      expect(firstMessage(registerCoreSchema.safeParse(validInput({ username })))).toBe(
+        "Ese usuario no está disponible.",
+      );
+    }
+  });
+
+  it("requires a cédula", () => {
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ nationalId: "" })))).toBe(
+      "La cédula es obligatoria.",
+    );
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ nationalId: "   " })))).toBe(
+      "La cédula es obligatoria.",
+    );
+  });
+
+  it("accepts a cédula with letters, digits and hyphens", () => {
+    expect(registerCoreSchema.safeParse(validInput({ nationalId: "V-12.345.678" })).success).toBe(
+      true,
+    );
+    expect(registerCoreSchema.safeParse(validInput({ nationalId: "E-12345678" })).success).toBe(
+      true,
+    );
+  });
+
+  it("caps the cédula at 40 characters", () => {
+    expect(firstMessage(registerCoreSchema.safeParse(validInput({ nationalId: "1".repeat(41) })))).toBe(
+      "La cédula es demasiado larga.",
+    );
+  });
+});
+
+describe("register schema — optional email", () => {
+  it("accepts an omitted email", () => {
+    const { email: _email, ...withoutEmail } = validInput();
+    expect(registerCoreSchema.safeParse(withoutEmail).success).toBe(true);
+  });
+
+  it("accepts the empty string the form sends", () => {
+    expect(registerCoreSchema.safeParse(validInput({ email: "" })).success).toBe(true);
+    expect(registerCoreSchema.safeParse(validInput({ email: "   " })).success).toBe(true);
+  });
+
+  it("still rejects a malformed address with the example message", () => {
+    const result = registerCoreSchema.safeParse(validInput({ email: "no-es-correo" }));
+    expect(firstMessage(result)).toBe(
+      "Ingresa un correo válido, por ejemplo nombre@dominio.com",
+    );
+  });
+
+  it("caps the email at 254 characters", () => {
+    const result = registerCoreSchema.safeParse(
+      validInput({ email: `${"a".repeat(250)}@example.com` }),
+    );
+    expect(firstMessage(result)).toBe("El correo es demasiado largo");
+  });
+});
+
 describe("register schema — fixed fields", () => {
   it("trims email and fullName and keeps the rest", () => {
     const result = registerCoreSchema.safeParse(
@@ -96,18 +198,6 @@ describe("register schema — fixed fields", () => {
     expect(firstMessage(result)).toBe("El enlace de invitación no es válido");
   });
 
-  it("rejects invalid email with the example message", () => {
-    const result = registerCoreSchema.safeParse(validInput({ email: "no-es-correo" }));
-    expect(firstMessage(result)).toBe(
-      "Ingresa un correo válido, por ejemplo nombre@dominio.com",
-    );
-  });
-
-  it("rejects an empty email", () => {
-    const result = registerCoreSchema.safeParse(validInput({ email: "" }));
-    expect(firstMessage(result)).toBe("El correo es obligatorio");
-  });
-
   it("rejects a full name shorter than two characters", () => {
     const result = registerCoreSchema.safeParse(validInput({ fullName: "A" }));
     expect(firstMessage(result)).toBe("Ingresa tu nombre completo");
@@ -118,10 +208,7 @@ describe("register schema — fixed fields", () => {
     expect(firstMessage(result)).toBe("La contraseña es demasiado larga");
   });
 
-  it("rejects a national id or phone longer than 40 characters", () => {
-    expect(firstMessage(registerCoreSchema.safeParse(validInput({ nationalId: "1".repeat(41) })))).toBe(
-      "El documento es demasiado largo",
-    );
+  it("rejects a phone longer than 40 characters", () => {
     expect(firstMessage(registerCoreSchema.safeParse(validInput({ phone: "1".repeat(41) })))).toBe(
       "El teléfono es demasiado largo",
     );

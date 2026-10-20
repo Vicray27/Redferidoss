@@ -40,6 +40,8 @@ const ROOT_ROW: AuthUserRow = {
   id: "8f2b5a1e-0000-4000-8000-000000000001",
   publicCode: "JJGYCMQ1",
   email: "victorjoseraymond@gmail.com",
+  username: "victor",
+  nationalId: "V-12345678",
   passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$aaaa$bbbb",
   fullName: "Administrador ROOT",
   role: "ROOT",
@@ -136,6 +138,60 @@ describe("findByEmail — the CITEXT workaround", () => {
     // The display lookup must not be able to leak a hash by accident.
     expect(calls[1].sql).not.toContain("password_hash");
     expect(calls[1].sql).not.toContain("email");
+  });
+});
+
+describe("findByIdentifier — email, cédula or username", () => {
+  it("parameterises the identifier and matches all three columns", async () => {
+    const { db, calls } = fakeDb<AuthUserRow>([ROOT_ROW]);
+    await createUserRepository(db).findByIdentifier("  Victor@Gmail.com  ");
+
+    const [call] = calls;
+    expect(call.sql).not.toContain("Victor@Gmail.com");
+    expect(call.sql).toContain("email = ?::citext");
+    expect(call.sql).toContain("username = ?::citext");
+    expect(call.sql).toContain("upper(regexp_replace(national_id");
+    expect(call.values).toEqual([
+      "Victor@Gmail.com",
+      "Victor@Gmail.com",
+      "VICTOR@GMAIL.COM",
+    ]);
+  });
+
+  it("normalises the national-id bind to upper-case without spaces", async () => {
+    const { db, calls } = fakeDb<AuthUserRow>([]);
+    await createUserRepository(db).findByIdentifier(" v 12.345.678 ");
+
+    expect(calls[0].values[2]).toBe("V12.345.678");
+  });
+
+  it("matches a normalised cédula in SQL, keeping hyphens and letters", async () => {
+    const { db, calls } = fakeDb<AuthUserRow>([]);
+    await createUserRepository(db).findByIdentifier("V-12.345.678");
+    expect(calls[0].sql).toContain("regexp_replace(national_id, '\\s+', '', 'g')");
+  });
+
+  it("returns null when two distinct users match, instead of choosing one", async () => {
+    const { db } = fakeDb<AuthUserRow>([ROOT_ROW, { ...ROOT_ROW, id: "other" }]);
+    await expect(createUserRepository(db).findByIdentifier("root")).resolves.toBeNull();
+  });
+
+  it("returns the single row and excludes soft-deleted users", async () => {
+    const { db, calls } = fakeDb<AuthUserRow>([ROOT_ROW]);
+    await expect(createUserRepository(db).findByIdentifier("victor")).resolves.toEqual(ROOT_ROW);
+    expect(calls[0].sql).toContain("deleted_at IS NULL");
+    expect(calls[0].sql).toContain("LIMIT 2");
+  });
+
+  it("selects the password hash, email, username and national id for the login path", async () => {
+    const { db, calls } = fakeDb<AuthUserRow>();
+    await createUserRepository(db).findByIdentifier("victor");
+
+    expect(calls[0].sql).toContain('password_hash AS "passwordHash"');
+    // Formatting is not the contract: the alias is.
+    expect(calls[0].sql).toMatch(/email::text\s+AS email/);
+    expect(calls[0].sql).toMatch(/username::text\s+AS username/);
+    expect(calls[0].sql).toMatch(/national_id\s+AS "nationalId"/);
   });
 });
 

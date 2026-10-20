@@ -14,8 +14,12 @@
 // for ROOT_PASSWORD.
 //
 // Usage (server, container with the repo mounted — see README):
-//   AUTH_USER_EMAIL=someone@example.com AUTH_USER_PASSWORD='<strong>' \
+//   AUTH_USER_IDENTIFIER=someone@example.com AUTH_USER_PASSWORD='<strong>' \
 //     pnpm auth:set-password
+//
+// `AUTH_USER_IDENTIFIER` accepts the same three forms as the login form: email,
+// cédula or username (D86). `AUTH_USER_EMAIL` is still read as a fallback so
+// existing runbooks keep working; the new name wins when both are present.
 // =============================================================================
 
 import { pathToFileURL } from "node:url";
@@ -23,7 +27,7 @@ import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 
 import { hashPassword } from "../lib/password";
-import { normalizeEmail } from "../lib/users";
+import { createUserRepository } from "../lib/users";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -36,36 +40,56 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/** New name first, legacy name second; never a default. */
+function requireIdentifier(): string {
+  const identifier = process.env.AUTH_USER_IDENTIFIER?.trim();
+  if (identifier) return identifier;
+  const legacy = process.env.AUTH_USER_EMAIL?.trim();
+  if (legacy) return legacy;
+  throw new Error(
+    "AUTH_USER_IDENTIFIER is required (email, cédula or username). " +
+      "AUTH_USER_EMAIL is still accepted for compatibility, but one of the two must be set.",
+  );
+}
+
 export async function setPassword(client: PrismaClient = new PrismaClient()): Promise<number> {
   try {
-    const email = normalizeEmail(requireEnv("AUTH_USER_EMAIL"));
+    const identifier = requireIdentifier();
     const plain = requireEnv("AUTH_USER_PASSWORD");
+
+    // Resolve first, so a typo fails before spending Argon2 time. The lookup
+    // covers email, username and the normalised cédula (D86).
+    const users = createUserRepository(client);
+    const user = await users.findByIdentifier(identifier);
+    if (!user) {
+      throw new Error(
+        `No user matched "${identifier}". Check the value; email and username are ` +
+          `case-insensitive and the cédula is compared without spaces.`,
+      );
+    }
 
     // Argon2id, so the stored hash matches what hashPassword produced in the
     // seed. Reusing lib/password.ts is what guarantees the two can never drift
     // to different parameters.
     const passwordHash = await hashPassword(plain);
 
-    // CITEXT, so this is a parameterised raw statement (D14). The lookup is
-    // scoped to ACTIVE, non-deleted users: re-enabling a suspended account by
-    // resetting its password would be a privilege escalation through a support
-    // task.
-    const rows = await client.$queryRaw<Array<{ id: string; public_code: string }>>`
+    // Update by primary key: the identifier was already resolved, and a second
+    // match against CITEXT would reopen the ambiguity the lookup refused.
+    const rows = await client.$queryRaw<Array<{ public_code: string }>>`
       UPDATE users
       SET password_hash = ${passwordHash}
-      WHERE email = ${email}::citext
+      WHERE id = ${user.id}::uuid
         AND deleted_at IS NULL
-      RETURNING id, public_code
+      RETURNING public_code
     `;
 
     if (rows.length === 0) {
       throw new Error(
-        `No user matched ${email}. Check the address and the spelling; ` +
-          `it is matched case-insensitively against users.email.`,
+        `The user matched "${identifier}" but disappeared before the update.`,
       );
     }
 
-    console.log(`· password updated for ${email} (public_code ${rows[0].public_code})`);
+    console.log(`· password updated for ${identifier} (public_code ${rows[0].public_code})`);
     console.log(
       "  sessions already issued stay valid for up to 8h: sessions are stateless " +
         "JWTs (D17). Restart the app container to invalidate them immediately.",

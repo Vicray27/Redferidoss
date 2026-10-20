@@ -58,7 +58,7 @@ export async function resolveLoginMaxFailures(): Promise<number> {
 
 /** The real credential-check dependencies. */
 export const loginDeps: LoginDeps = {
-  findUserByEmail: (email) => users.findByEmail(email),
+  findUserByIdentifier: (identifier) => users.findByIdentifier(identifier),
   verifyPassword,
   burn: burnVerificationTime,
   // The token's own `exp` follows the same settings-derived lifetime as the

@@ -42,7 +42,7 @@ export interface LoginResult {
 }
 
 export async function loginAction(
-  input: { email: string; password: string },
+  input: { identifier: string; password: string },
   nextPath: string | null,
 ): Promise<LoginResult> {
   const parsed = loginSchema.safeParse(input);
@@ -50,7 +50,7 @@ export async function loginAction(
     return { ok: false, fieldErrors: firstIssuesByField(parsed.error) };
   }
 
-  const email = parsed.data.email;
+  const identifier = parsed.data.identifier;
 
   try {
     // Throttle BEFORE spending argon2 time, so a brute-force run is cheap to
@@ -58,22 +58,22 @@ export async function loginAction(
     // settings (§18.3); a missing or unusable row throws and surfaces as a 500
     // rather than silently using a stale hardcoded number.
     const maxFailures = await resolveLoginMaxFailures();
-    if (await loginRateLimiter.current(email) >= maxFailures) {
+    if (await loginRateLimiter.current(identifier) >= maxFailures) {
       return { ok: false, message: RATE_LIMITED_MESSAGE };
     }
 
-    const outcome = await authenticate(email, parsed.data.password, loginDeps);
+    const outcome = await authenticate(identifier, parsed.data.password, loginDeps);
 
     if (!outcome.ok) {
       // Only failures are counted. Counting every request would let anyone
       // lock a known user out with a handful of junk POSTs.
-      await loginRateLimiter.recordFailure(email);
+      await loginRateLimiter.recordFailure(identifier);
       return { ok: false, message: outcome.message };
     }
 
     // A success clears the counter, so a user who mistyped a few times is not
     // left one error away from being locked out.
-    await loginRateLimiter.reset(email);
+    await loginRateLimiter.reset(identifier);
 
     // Where to send the user: the page they originally asked for when that is
     // safe, otherwise their role's landing. `safeNextPath` is what stops

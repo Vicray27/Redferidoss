@@ -40,11 +40,20 @@ function fakeDb(rows: Array<{ count: number }> = []) {
 const T0 = 1_800_000_000_000;
 
 describe("loginRateLimitKey", () => {
-  it("is stable, and folds case and whitespace so one address is one bucket", () => {
+  it("is stable, and folds case and whitespace so one email is one bucket", () => {
     expect(loginRateLimitKey("Root@Example.com")).toBe(loginRateLimitKey("  root@example.COM "));
   });
 
-  it("does not store the address: the key is a SHA-256 prefix", () => {
+  it("folds a cédula to the same normalised form the lookup uses", () => {
+    expect(loginRateLimitKey("v 12.345.678")).toBe(loginRateLimitKey("V12.345.678"));
+    expect(loginRateLimitKey(" V-12.345.678 ")).toBe(loginRateLimitKey("v-12.345.678"));
+  });
+
+  it("folds a username case-insensitively", () => {
+    expect(loginRateLimitKey("Juan.Perez")).toBe(loginRateLimitKey(" juan.perez "));
+  });
+
+  it("does not store the identifier: the key is a SHA-256 prefix", () => {
     const key = loginRateLimitKey("victorjoseraymond@gmail.com");
     expect(key).toMatch(/^login:[0-9a-f]{32}$/);
     // rate_limits has no owner semantics; storing a plaintext address there
@@ -53,8 +62,9 @@ describe("loginRateLimitKey", () => {
     expect(key).not.toContain("victor");
   });
 
-  it("gives different addresses different keys", () => {
+  it("gives different identifiers different keys", () => {
     expect(loginRateLimitKey("a@example.com")).not.toBe(loginRateLimitKey("b@example.com"));
+    expect(loginRateLimitKey("juan.perez")).not.toBe(loginRateLimitKey("V-12345678"));
   });
 });
 

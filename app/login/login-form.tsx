@@ -52,7 +52,7 @@ export function LoginForm({ nextPath }: { nextPath: string | null }) {
   } = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
     mode: "onSubmit",
-    defaultValues: { email: "", password: "" },
+    defaultValues: { identifier: "", password: "" },
   });
 
   const onSubmit = handleSubmit(async (values) => {
@@ -70,7 +70,7 @@ export function LoginForm({ nextPath }: { nextPath: string | null }) {
 
       if (result.fieldErrors) {
         for (const [field, message] of Object.entries(result.fieldErrors)) {
-          if (field === "email" || field === "password") {
+          if (field === "identifier" || field === "password") {
             setError(field, { type: "server", message });
           }
         }
@@ -92,7 +92,7 @@ export function LoginForm({ nextPath }: { nextPath: string | null }) {
       <CardHeader>
         <CardTitle>Iniciar sesión</CardTitle>
         <CardDescription>
-          Ingresa con el correo y la contraseña con los que te registró tu patrocinador.
+          Ingresa con tu correo, cédula o usuario y tu contraseña.
         </CardDescription>
       </CardHeader>
 
@@ -109,20 +109,20 @@ export function LoginForm({ nextPath }: { nextPath: string | null }) {
           ) : null}
 
           <div className="space-y-2">
-            <Label htmlFor="email">Correo electrónico</Label>
+            <Label htmlFor="identifier">Correo, cédula o usuario</Label>
             <Input
-              id="email"
-              type="email"
+              id="identifier"
+              type="text"
               autoComplete="username"
-              placeholder="nombre@dominio.com"
-              aria-invalid={errors.email ? true : undefined}
-              aria-describedby={errors.email ? "email-error" : undefined}
+              placeholder="nombre@dominio.com o V-12345678"
+              aria-invalid={errors.identifier ? true : undefined}
+              aria-describedby={errors.identifier ? "identifier-error" : undefined}
               disabled={isSubmitting}
-              {...register("email")}
+              {...register("identifier")}
             />
-            {errors.email ? (
-              <p id="email-error" role="alert" className="text-sm text-destructive">
-                {errors.email.message}
+            {errors.identifier ? (
+              <p id="identifier-error" role="alert" className="text-sm text-destructive">
+                {errors.identifier.message}
               </p>
             ) : null}
           </div>

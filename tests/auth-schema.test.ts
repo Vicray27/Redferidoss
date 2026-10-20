@@ -5,67 +5,85 @@ import { firstIssuesByField, loginSchema, type LoginInput } from "../lib/auth/sc
 /**
  * No database and no framework: Zod runs identically in a Client Component and
  * in a Server Action, which is the point — one definition, two call sites.
+ *
+ * The identifier field accepts three shapes (D86): email, cédula or username.
+ * It must NOT use `z.email()`, or the two new forms would be rejected before
+ * they ever reach the repository.
  */
 
 function parse(overrides: Partial<LoginInput> = {}) {
-  return loginSchema.safeParse({ email: "", password: "", ...overrides });
+  return loginSchema.safeParse({ identifier: "", password: "", ...overrides });
 }
 
 describe("loginSchema — accepts a well-formed login", () => {
-  it("accepts a normal pair", () => {
-    const result = parse({ email: "root@example.com", password: "correcta" });
+  it("accepts an email", () => {
+    const result = parse({ identifier: "root@example.com", password: "correcta" });
     expect(result.success).toBe(true);
   });
 
-  it("trims the email before validating it", () => {
-    const result = parse({ email: "  root@example.com  ", password: "correcta" });
+  it("accepts a cédula", () => {
+    const result = parse({ identifier: "V-12345678", password: "correcta" });
     expect(result.success).toBe(true);
-    expect(result.success && result.data.email).toBe("root@example.com");
   });
 
-  it("preserves the case of the email, leaving normalisation to the repository", () => {
-    // The schema must NOT lowercase: `normalizeEmail` does that in lib/users.ts
-    // against the database's own CITEXT folding. Doing it twice in two places
-    // is how the two rules drift apart.
-    const result = parse({ email: "Root@Example.COM", password: "correcta" });
-    expect(result.success && result.data.email).toBe("Root@Example.COM");
+  it("accepts a username", () => {
+    const result = parse({ identifier: "juan.perez", password: "correcta" });
+    expect(result.success).toBe(true);
+  });
+
+  it("trims the identifier before validating it", () => {
+    const result = parse({ identifier: "  juan.perez  ", password: "correcta" });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.identifier).toBe("juan.perez");
+  });
+
+  it("preserves the case, leaving normalisation to the repository", () => {
+    // The schema must NOT lowercase: normalizeLoginIdentifier does that for the
+    // throttle and the SQL comparison. Doing it twice in two places is how the
+    // two rules drift apart.
+    const result = parse({ identifier: "Root@Example.COM", password: "correcta" });
+    expect(result.success && result.data.identifier).toBe("Root@Example.COM");
   });
 });
 
 describe("loginSchema — rejects with a Spanish message", () => {
-  it("rejects an empty email with the required-field message", () => {
-    const result = parse({ email: "", password: "correcta" });
+  it("rejects an empty identifier with the required-field message", () => {
+    const result = parse({ identifier: "", password: "correcta" });
     expect(result.success).toBe(false);
-    expect(firstIssuesByField(result.error!).email).toBe("El correo es obligatorio");
-  });
-
-  it("rejects a whitespace-only email as required, not as malformed", () => {
-    // `.trim()` runs before `.min(1)`, so a pasted space is a missing field and
-    // must not be reported to the user as "invalid email".
-    const result = parse({ email: "     ", password: "correcta" });
-    expect(firstIssuesByField(result.error!).email).toBe("El correo es obligatorio");
-  });
-
-  it("rejects a malformed email with a message that shows the expected shape", () => {
-    const result = parse({ email: "no-es-un-correo", password: "correcta" });
-    expect(firstIssuesByField(result.error!).email).toMatch(
-      /Ingresa un correo válido.*nombre@dominio\.com/,
+    expect(firstIssuesByField(result.error!).identifier).toBe(
+      "Ingresa tu correo, cédula o usuario.",
     );
   });
 
-  it("rejects a missing @", () => {
-    expect(parse({ email: "root@example", password: "x" }).success).toBe(false);
-    expect(parse({ email: "root example.com", password: "x" }).success).toBe(false);
+  it("rejects a whitespace-only identifier as required, not as malformed", () => {
+    // `.trim()` runs before `.min(1)`, so a pasted space is a missing field and
+    // must not be reported to the user as an invalid value.
+    const result = parse({ identifier: "     ", password: "correcta" });
+    expect(firstIssuesByField(result.error!).identifier).toBe(
+      "Ingresa tu correo, cédula o usuario.",
+    );
+  });
+
+  it("does NOT require an @: a username or cédula is valid input", () => {
+    expect(parse({ identifier: "no-es-un-correo", password: "correcta" }).success).toBe(true);
+    expect(parse({ identifier: "root example.com", password: "correcta" }).success).toBe(true);
+  });
+
+  it("accepts an address at the registration email limit", () => {
+    const identifier = `${"a".repeat(242)}@example.com`;
+    expect(identifier).toHaveLength(254);
+    const result = parse({ identifier, password: "correcta" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an over-long identifier", () => {
+    const result = parse({ identifier: "a".repeat(255), password: "correcta" });
+    expect(firstIssuesByField(result.error!).identifier).toBe("El dato es demasiado largo.");
   });
 
   it("rejects an empty password with the required-field message", () => {
-    const result = parse({ email: "root@example.com", password: "" });
+    const result = parse({ identifier: "root@example.com", password: "" });
     expect(firstIssuesByField(result.error!).password).toBe("La contraseña es obligatoria");
-  });
-
-  it("rejects an over-long email", () => {
-    const result = parse({ email: `${"a".repeat(250)}@example.com`, password: "correcta" });
-    expect(firstIssuesByField(result.error!).email).toBe("El correo es demasiado largo");
   });
 });
 
@@ -74,32 +92,26 @@ describe("loginSchema — password policy is deliberately NOT enforced here", ()
     // A login form checks an existing hash; it cannot enforce a policy. Doing so
     // would lock out every account created before the policy tightened, and the
     // stored hash carries no length to inspect anyway.
-    const result = parse({ email: "root@example.com", password: "a" });
+    const result = parse({ identifier: "root@example.com", password: "a" });
     expect(result.success).toBe(true);
   });
 
   it("still rejects an absurdly long password, to bound the hashing cost", () => {
-    const result = parse({ email: "root@example.com", password: "a".repeat(201) });
+    const result = parse({ identifier: "root@example.com", password: "a".repeat(201) });
     expect(firstIssuesByField(result.error!).password).toBe("La contraseña es demasiado larga");
   });
 });
 
 describe("firstIssuesByField", () => {
   it("keeps only the FIRST message per field", () => {
-    // A blank email trips both min(1) and email(); showing two errors at once
-    // would be noise, and the server must render the same one as the client.
-    const result = parse({ email: "", password: "" });
+    const result = parse({ identifier: "", password: "" });
     const issues = firstIssuesByField(result.error!);
-    expect(issues.email).toBe("El correo es obligatorio");
+    expect(issues.identifier).toBe("Ingresa tu correo, cédula o usuario.");
     expect(issues.password).toBe("La contraseña es obligatoria");
   });
 
   it("returns an empty map when every field is individually valid", () => {
-    // Sanity check on the helper itself, using an error that only has issues
-    // the previous test already consumed.
-    const result = parse({ email: "no-es-un-correo", password: "correcta" });
-    expect(result.success).toBe(false);
-    const issues = firstIssuesByField(result.error!);
-    expect(Object.keys(issues)).toEqual(["email"]);
+    const result = parse({ identifier: "juan.perez", password: "correcta" });
+    expect(result.success).toBe(true);
   });
 });

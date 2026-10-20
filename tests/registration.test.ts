@@ -44,7 +44,9 @@ import type { SettingsLike } from "../lib/authz";
 
 interface FakeUser {
   id: string;
-  email: string;
+  email: string | null;
+  username: string;
+  nationalId: string | null;
   publicCode: string;
   sponsorId: string | null;
   depth: number;
@@ -199,7 +201,19 @@ class RegistrationFake {
       }
       case "@reg:email-exists": {
         const email = String(values[0]).toLowerCase();
-        return this.users.some((u) => u.email.toLowerCase() === email) ? [{ one: 1 }] : [];
+        return this.users.some((u) => u.email?.toLowerCase() === email) ? [{ one: 1 }] : [];
+      }
+      case "@reg:username-exists": {
+        const username = String(values[0]).toLowerCase();
+        return this.users.some((u) => u.username.toLowerCase() === username) ? [{ one: 1 }] : [];
+      }
+      case "@reg:national-id-exists": {
+        const nationalId = String(values[0]).replace(/\s+/g, "").toUpperCase();
+        return this.users.some(
+          (u) => (u.nationalId ?? "").replace(/\s+/g, "").toUpperCase() === nationalId,
+        )
+          ? [{ one: 1 }]
+          : [];
       }
       case "@reg:code-exists": {
         return this.users.some((u) => u.publicCode === values[0]) ? [{ one: 1 }] : [];
@@ -210,6 +224,7 @@ class RegistrationFake {
           publicCode,
           sponsorId,
           email,
+          username,
           passwordHash,
           fullName,
           nationalId,
@@ -226,7 +241,9 @@ class RegistrationFake {
         const id = `user-${this.users.length + 1}`;
         this.users.push({
           id,
-          email,
+          email: email ?? null,
+          username,
+          nationalId: nationalId ?? null,
           publicCode,
           sponsorId,
           depth: sponsor.depth + 1, // the trigger's job in production
@@ -234,7 +251,7 @@ class RegistrationFake {
           fullName,
           passwordHash,
         });
-        void [nationalId, phone, birthDate, country, state, city, address];
+        void [phone, birthDate, country, state, city, address];
         return [{ id, publicCode, status }];
       }
       case "@reg:insert-field-value": {
@@ -309,6 +326,8 @@ function seedSponsor(fake: RegistrationFake, overrides: Partial<FakeUser> = {}):
   const sponsor: FakeUser = {
     id: "sponsor-1",
     email: "ana@example.com",
+    username: "ana",
+    nationalId: "V-00000001",
     publicCode: "JJGYCMQ1",
     sponsorId: null,
     depth: 0,
@@ -360,6 +379,8 @@ function makeDeps(
 const INPUT = {
   invite: "JJGYCMQ1",
   email: "Nuevo@Example.com",
+  username: "Nuevo.Miembro",
+  nationalId: " v 11.111.111 ",
   password: "secreto123",
   fullName: "Nuevo Miembro",
 };
@@ -378,6 +399,8 @@ describe("registerUser — permanent link happy path", () => {
     expect(result).toMatchObject({
       userId: "user-2",
       email: "nuevo@example.com",
+      username: "nuevo.miembro",
+      nationalId: "V11.111.111",
       fullName: "Nuevo Miembro",
       status: "ACTIVE",
       sponsorId: "sponsor-1",
@@ -390,6 +413,8 @@ describe("registerUser — permanent link happy path", () => {
     expect(created.sponsorId).toBe("sponsor-1");
     expect(created.depth).toBe(1);
     expect(created.status).toBe("ACTIVE");
+    expect(created.username).toBe("nuevo.miembro");
+    expect(created.nationalId).toBe("V11.111.111");
     // The stored value is exactly what the injected hasher returned — the
     // real Argon2 wiring is covered by the password module's own tests.
     expect(created.passwordHash).toBe("hashed(secreto123)");
@@ -566,6 +591,72 @@ describe("registerUser — identity and status rules", () => {
     } catch (error) {
       expect((error as Error).message).toBe(REGISTRATION_CONFLICT_MESSAGE);
     }
+    expect(fake.users).toHaveLength(1);
+  });
+
+  it("one generic 409 for a duplicate username — no enumeration oracle", async () => {
+    const fake = new RegistrationFake();
+    seedSponsor(fake);
+
+    await expect(
+      registerUser(
+        { ...INPUT, username: "ANA", email: "unique@example.com" },
+        {},
+        makeDeps(fake),
+      ),
+    ).rejects.toMatchObject({
+      name: "RegistrationConflictError",
+      status: 409,
+      code: "REGISTRATION_CONFLICT",
+    });
+    expect(fake.users).toHaveLength(1);
+  });
+
+  it("one generic 409 for a duplicate normalised cédula", async () => {
+    const fake = new RegistrationFake();
+    seedSponsor(fake);
+
+    await expect(
+      registerUser(
+        {
+          ...INPUT,
+          username: "unique-user",
+          email: "unique@example.com",
+          nationalId: "  v-00000001 ",
+        },
+        {},
+        makeDeps(fake),
+      ),
+    ).rejects.toMatchObject({
+      name: "RegistrationConflictError",
+      status: 409,
+      code: "REGISTRATION_CONFLICT",
+    });
+    expect(fake.users).toHaveLength(1);
+  });
+
+  it("registers without an email when the invite is not directed", async () => {
+    const fake = new RegistrationFake();
+    seedSponsor(fake);
+
+    const result = await registerUser({ ...INPUT, email: undefined }, {}, makeDeps(fake));
+
+    expect(result.email).toBeNull();
+    expect(fake.users[1].email).toBeNull();
+    expect(fake.calls.some((c) => c.marker === "@reg:email-exists")).toBe(false);
+  });
+
+  it("refuses a directed invite when the optional email was left blank", async () => {
+    const fake = new RegistrationFake();
+    seedSponsor(fake);
+    seedInvitation(fake, { emailTarget: "invitado@example.com" });
+
+    await expect(
+      registerUser({ ...INPUT, invite: "tok-1", email: undefined }, {}, makeDeps(fake)),
+    ).rejects.toMatchObject({
+      name: "RegistrationConflictError",
+      code: "REGISTRATION_CONFLICT",
+    });
     expect(fake.users).toHaveLength(1);
   });
 

@@ -95,8 +95,11 @@ Sólo `AUTH_SECRET`. `DATABASE_URL` ya hacía falta para todo lo demás.
 2. El Server Action `loginAction` **vuelve a validar en el servidor** con el
    mismo esquema: la validación del cliente es una comodidad de UX, no un
    límite de confianza.
-3. `lib/auth/login.ts` busca el usuario por email con `$queryRaw`
-   parametrizado y `::citext` (`users.email` es CITEXT y Prisma no lo puede
+3. `lib/auth/login.ts` busca al usuario por email, cédula o usuario con una
+   sola consulta `$queryRaw` parametrizada (`lib/users.ts:findByIdentifier`):
+   `email` y `username` son CITEXT, y la cédula se compara normalizada. Si el
+   identificador coincide con dos cuentas, el login se rechaza en vez de elegir
+   una (D86). Prisma no puede consultar CITEXT directamente
    tipar, D14), y verifica la contraseña con Argon2id.
 4. Si las credenciales son correctas, se firma un JWT (HS256) con el TTL de
    `security.session_ttl_hours` (efectivo: 8 h, tope D17/D65) y se guarda en la
@@ -117,14 +120,16 @@ consola, deliberadamente explícita:
 ```sh
 docker run --rm -v "$PWD:/app" -w /app --network <red-del-stack> \
   -e DATABASE_URL="postgresql://referidos:<password>@postgres:5432/referidos?schema=public" \
-  -e AUTH_USER_EMAIL="victorjoseraymond@gmail.com" \
+  -e AUTH_USER_IDENTIFIER="victorjoseraymond@gmail.com" \
   -e AUTH_USER_PASSWORD='<nueva contraseña fuerte>' \
   node:24-alpine sh -lc "corepack enable && pnpm install --no-frozen-lockfile && pnpm auth:set-password"
 ```
 
-Imprime cuántos usuarios coincidieron. Aborta si la contraseña falta o si el
-correo no existe: no hay default, no hay generación automática y no hay
-contraseña en el repositorio.
+`AUTH_USER_IDENTIFIER` acepta las mismas tres formas que el login: correo,
+cédula o usuario. `AUTH_USER_EMAIL` sigue funcionando como alias de
+compatibilidad. Imprime cuántos usuarios coincidieron. Aborta si la contraseña
+falta o si el identificador no existe: no hay default, no hay generación
+automática y no hay contraseña en el repositorio.
 
 Las sesiones ya abiertas siguen siendo válidas hasta 8 h después del reset
 (las sesiones son JWT sin estado; ver D17). Para que el cambio surta efecto de
@@ -135,8 +140,8 @@ inmediato, hay que cerrar sesión o reiniciar el contenedor `app`.
 `prisma/migrations/*/migration.sql` es la ÚNICA autoridad de DDL. `0001_init`
 trae extensions ltree/pgcrypto/citext, 7 enums, 17 tablas, índices §5, EXCLUDE
 de ciclos, triggers de árbol y `fn_user_move()`; `0002_settings_notify`,
-`0003_weekly_reports`, `0004_tree_rebuild` y `0005_mv_payment_weekly` la
-extienden (18 tablas en total + la vista materializada).
+`0003_weekly_reports`, `0004_tree_rebuild`, `0005_mv_payment_weekly` y
+`0006_identity_login` la extienden (18 tablas en total + la vista materializada).
 
 `prisma/schema.prisma` es su espejo exacto: mismos enums (tipos en minúsculas,
 idénticos al SQL), mismas 18 tablas, mismos nombres de columna y tipos. Las
@@ -223,7 +228,7 @@ cd /opt/red-referidos
 # 2. Nombre de la red del stack (por defecto <stack>_default):
 docker network ls | grep <stack>
 
-# 3. Migrar (aplica todas las migraciones pendientes, 0001_init … 0005_mv_payment_weekly;
+# 3. Migrar (aplica todas las migraciones pendientes, 0001_init … 0006_identity_login;
 #    `migrate deploy` es idempotente, volver a correrlo no reaplica nada):
 docker run --rm -v "$PWD:/app" -w /app --network <red-del-stack> \
   -e DATABASE_URL="postgresql://referidos:<password>@postgres:5432/referidos?schema=public" \
@@ -305,7 +310,7 @@ SELECT migration_name, finished_at IS NOT NULL AS ok FROM _prisma_migrations;
 
 | Archivo | Qué hace |
 |---|---|
-| `lib/users.ts` | `findByEmail` / `findByPublicCode` sobre `$queryRaw` con `::citext` (D14). |
+| `lib/users.ts` | `findByEmail`, `findByIdentifier` (email, cédula o usuario) y `findByPublicCode` sobre `$queryRaw` con `::citext` (D14, D86). |
 | `lib/auth/guards.ts` | Rol y ruta como funciones puras; `safeNextPath` anti open-redirect (D15). |
 | `lib/auth/session.ts` | Token JWT HS256 con `jose`, Edge-safe; `AUTH_SECRET` en runtime (D16, D17). |
 | `lib/auth/schema.ts` | `loginSchema` de Zod, compartido por cliente y servidor. |
@@ -329,7 +334,7 @@ de referencia.
 
 | Método y ruta | Qué hace | Protección |
 |---|---|---|
-| `POST /api/auth/register` | Registro vía invitación (§8.3): valida, hashea fuera de la transacción, reválida bajo `FOR UPDATE`, crea usuario + obligación + auditoría, emite sesión. | `assertSameOrigin` + throttle por IP (`security.register_rate_limit_per_hour_per_ip`, D30/D64) |
+| `POST /api/auth/register` | Registro vía invitación (§8.3): exige usuario y cédula, acepta correo opcional (una invitación dirigida sí lo exige), valida, hashea fuera de la transacción, reválida bajo `FOR UPDATE`, crea usuario + obligación + auditoría, emite sesión (D86). | `assertSameOrigin` + throttle por IP (`security.register_rate_limit_per_hour_per_ip`, D30/D64) |
 | `GET /api/public/invite/[slug]` | Resuelve `/r/{code}` o `/invite/{token}`: patrocinador, cupos, campos del formulario. Sin `emailTarget`. | throttle por IP (60/10 min) |
 | `GET /api/network/children` | Hijos directos paginados por keyset; `parentId` default = uno mismo. | `requireApiSession` + `assertCanViewUser` + `scopeFilter` |
 | `GET /api/network/search` | Búsqueda por nombre o código dentro del alcance del actor. | ídem |

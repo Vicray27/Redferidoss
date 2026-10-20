@@ -14,9 +14,11 @@
 //   guessing itself, which is the actual attack. A user who mistypes three
 //   times has not reached the limit.
 //
-// * THE KEY IS A HASH OF THE EMAIL. The address is a CITEXT value the user
-//   chose; storing it in a table that nothing displays would be collecting PII
-//   for no benefit. The window bucket needs a stable, non-reversible label.
+// * THE KEY IS A HASH OF THE IDENTIFIER. The identifier is a CITEXT email or
+//   username, or a cédula the user chose; storing it in a table that nothing
+//   displays would be collecting PII for no benefit. The window bucket needs a
+//   stable, non-reversible label. Emails and usernames fold case-insensitively;
+//   cédulas fold through the same normalisation the lookup query uses.
 //
 // * FIXED WINDOW, not sliding. §5.9 defines a composite (key, window_start)
 //   primary key, which is a fixed window by construction. A sliding window
@@ -36,6 +38,8 @@
 
 import { createHash } from "node:crypto";
 
+import { normalizeLoginIdentifier } from "../identity";
+
 /** Window length. Long enough not to punish typos, short to limit guessing. */
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
@@ -49,19 +53,23 @@ export type RawQueryDb = {
 
 export interface RateLimiter {
   /** Current failure count for the window containing `now`. Never negative. */
-  current(email: string, now?: number): Promise<number>;
+  current(identifier: string, now?: number): Promise<number>;
   /** Record one failed attempt. Returns the new count. */
-  recordFailure(email: string, now?: number): Promise<number>;
+  recordFailure(identifier: string, now?: number): Promise<number>;
   /** Clear the counter after a successful login. */
-  reset(email: string, now?: number): Promise<void>;
-  /** Stable, non-reversible storage key for an address. */
-  keyFor(email: string): string;
+  reset(identifier: string, now?: number): Promise<void>;
+  /** Stable, non-reversible storage key for an identifier. */
+  keyFor(identifier: string): string;
 }
 
-/** SHA-256 of the normalised address, hex. Not reversible, and fixed length. */
-export function loginRateLimitKey(email: string): string {
+/**
+ * SHA-256 of the normalised identifier, hex. Not reversible, and fixed length.
+ * Email and username collapse case; cédulas lose whitespace and gain case
+ * folding, so every spelling of one login shares a single bucket.
+ */
+export function loginRateLimitKey(identifier: string): string {
   const digest = createHash("sha256")
-    .update(email.trim().toLowerCase())
+    .update(normalizeLoginIdentifier(identifier))
     .digest("hex");
   return `login:${digest.slice(0, 32)}`;
 }
@@ -78,26 +86,26 @@ export function createLoginRateLimiter(
   const now = options.now ?? (() => Date.now());
   const windowMs = options.windowMs ?? LOGIN_WINDOW_MS;
 
-  const keyFor = (email: string) => loginRateLimitKey(email);
+  const keyFor = (identifier: string) => loginRateLimitKey(identifier);
 
   return {
     keyFor,
 
-    async current(email: string): Promise<number> {
+    async current(identifier: string): Promise<number> {
       const rows = await db.$queryRaw<Array<{ count: bigint }>>`
         SELECT count FROM rate_limits
-        WHERE key = ${keyFor(email)} AND window_start = ${windowStart(now(), windowMs)}
+        WHERE key = ${keyFor(identifier)} AND window_start = ${windowStart(now(), windowMs)}
       `;
       const value = rows[0]?.count;
       return value === undefined ? 0 : Number(value);
     },
 
-    async recordFailure(email: string): Promise<number> {
+    async recordFailure(identifier: string): Promise<number> {
       // Atomic upsert: two concurrent wrong-password submissions must not both
       // read 7 and both store 7, which would let a burst slip past the limit.
       const rows = await db.$queryRaw<Array<{ count: bigint }>>`
         INSERT INTO rate_limits (key, window_start, count)
-        VALUES (${keyFor(email)}, ${windowStart(now(), windowMs)}, 1)
+        VALUES (${keyFor(identifier)}, ${windowStart(now(), windowMs)}, 1)
         ON CONFLICT (key, window_start) DO UPDATE SET count = rate_limits.count + 1
         RETURNING count
       `;
@@ -105,12 +113,12 @@ export function createLoginRateLimiter(
       return value === undefined ? 0 : Number(value);
     },
 
-    async reset(email: string): Promise<void> {
+    async reset(identifier: string): Promise<void> {
       // Deletes this window's row only. Removing older windows is the job of a
       // cleanup job (F7); leaving them costs one row per attempt per 15 min.
       await db.$queryRaw`
         DELETE FROM rate_limits
-        WHERE key = ${keyFor(email)} AND window_start = ${windowStart(now(), windowMs)}
+        WHERE key = ${keyFor(identifier)} AND window_start = ${windowStart(now(), windowMs)}
       `;
     },
   };

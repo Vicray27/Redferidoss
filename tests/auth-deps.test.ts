@@ -20,7 +20,7 @@ const settingsMock = vi.hoisted(() => ({
     size: vi.fn(),
   },
 }));
-const usersMock = vi.hoisted(() => ({ users: { findByEmail: vi.fn() } }));
+const usersMock = vi.hoisted(() => ({ users: { findByIdentifier: vi.fn() } }));
 const passwordMock = vi.hoisted(() => ({
   verifyPassword: vi.fn(),
   burnVerificationTime: vi.fn(),
@@ -103,12 +103,12 @@ describe("resolveLoginMaxFailures (F8)", () => {
 });
 
 describe("loginDeps", () => {
-  it("delegates the user lookup to lib/users", async () => {
+  it("delegates the identifier lookup to lib/users", async () => {
     const user = { id: "u-1" };
-    usersMock.users.findByEmail.mockResolvedValue(user);
+    usersMock.users.findByIdentifier.mockResolvedValue(user);
 
-    await expect(loginDeps.findUserByEmail("ana@example.com")).resolves.toBe(user);
-    expect(usersMock.users.findByEmail).toHaveBeenCalledWith("ana@example.com");
+    await expect(loginDeps.findUserByIdentifier("V-00000001")).resolves.toBe(user);
+    expect(usersMock.users.findByIdentifier).toHaveBeenCalledWith("V-00000001");
   });
 
   it("uses the real verifyPassword and burn implementations", () => {

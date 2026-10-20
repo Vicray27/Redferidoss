@@ -13,13 +13,13 @@
 // ---------------------------------------------------------------------------
 // Three defences that are easy to get wrong, so they are explicit here
 // ---------------------------------------------------------------------------
-// 1. NO USER ENUMERATION. A wrong email and a wrong password return the exact
-//    same message. Distinguishing them turns /login into an account-existence
-//    oracle.
-// 2. TIMING EQUALISATION. When the email is unknown there is no hash to verify,
-//    so the request would return in microseconds and leak existence through
-//    timing. `burn` performs a real argon2 verification against a dummy hash,
-//    making the two paths cost the same.
+// 1. NO USER ENUMERATION. A wrong identifier and a wrong password return the
+//    exact same message. Distinguishing them turns /login into an account-
+//    existence oracle.
+// 2. TIMING EQUALISATION. When the identifier is unknown there is no hash to
+//    verify, so the request would return in microseconds and leak existence
+//    through timing. `burn` performs a real argon2 verification against a
+//    dummy hash, making the two paths cost the same.
 // 3. STATUS IS CHECKED AFTER THE PASSWORD. A suspended user gets an accurate
 //    message, but only to someone who already proved they hold the password —
 //    so the accurate message cannot be used to probe for accounts.
@@ -29,10 +29,10 @@ import type { AuthUserRow, UserRole } from "../users";
 import type { SessionPayload } from "./session";
 
 /**
- * Shown for a wrong email AND a wrong password. Never vary one without the
+ * Shown for a wrong identifier AND a wrong password. Never vary one without the
  * other: that is what turns the form into an enumeration oracle.
  */
-export const INVALID_CREDENTIALS_MESSAGE = "Correo o contraseña incorrectos.";
+export const INVALID_CREDENTIALS_MESSAGE = "Correo, cédula o usuario incorrectos.";
 
 /** Only ever shown to a caller who already supplied the correct password. */
 export const ACCOUNT_SUSPENDED_MESSAGE =
@@ -47,7 +47,7 @@ export const AUTH_UNAVAILABLE_MESSAGE =
   "No es posible iniciar sesión en este momento. Contacta al administrador.";
 
 export interface LoginDeps {
-  findUserByEmail(email: string): Promise<AuthUserRow | null>;
+  findUserByIdentifier(identifier: string): Promise<AuthUserRow | null>;
   verifyPassword(storedHash: string, plain: string): Promise<boolean>;
   /**
    * Spends roughly the same CPU as a real verification. Must be called (and
@@ -66,15 +66,16 @@ export type LoginOutcome =
  * Verify credentials and mint a session token, or explain the refusal.
  *
  * The caller MUST validate the input with `loginSchema` first; this function
- * assumes `email` and `password` are non-empty strings and deliberately does
- * not repeat that validation.
+ * assumes `identifier` and `password` are non-empty strings and deliberately
+ * does not repeat that validation. Normalisation for the database lookup lives
+ * in the repository; `identifier` may be an email, cédula or username (D86).
  */
 export async function authenticate(
-  email: string,
+  identifier: string,
   password: string,
   deps: LoginDeps,
 ): Promise<LoginOutcome> {
-  const user = await deps.findUserByEmail(email);
+  const user = await deps.findUserByIdentifier(identifier);
 
   if (!user) {
     // Defence 2: equalise timing before giving up.

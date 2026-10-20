@@ -13,7 +13,9 @@ import { expect, test } from "@playwright/test";
 import {
   E2E_MEMBER_EMAIL,
   E2E_MEMBER_NAME,
+  E2E_MEMBER_NATIONAL_ID,
   E2E_MEMBER_PASSWORD,
+  E2E_MEMBER_USERNAME,
   E2E_REPORT_AMOUNT,
   E2E_ROOT_EMAIL,
   E2E_ROOT_PASSWORD,
@@ -27,7 +29,7 @@ test("invitar → registrar → reportar → aprobar → dashboard semanal", asy
     // ---- 1. Root signs in ------------------------------------------------
     const rootPage = await rootContext.newPage();
     await rootPage.goto("/login");
-    await rootPage.fill("#email", E2E_ROOT_EMAIL);
+    await rootPage.fill("#identifier", E2E_ROOT_EMAIL);
     await rootPage.fill("#password", E2E_ROOT_PASSWORD);
     await rootPage.getByRole("button", { name: "Entrar" }).click();
     await rootPage.waitForURL((url) => !url.pathname.startsWith("/login"));
@@ -48,6 +50,8 @@ test("invitar → registrar → reportar → aprobar → dashboard semanal", asy
     const memberPage = await memberContext.newPage();
     await memberPage.goto(`/invite/${token}`);
     await memberPage.fill("#fullName", E2E_MEMBER_NAME);
+    await memberPage.fill("#username", E2E_MEMBER_USERNAME);
+    await memberPage.fill("#nationalId", E2E_MEMBER_NATIONAL_ID);
     await memberPage.fill("#email", E2E_MEMBER_EMAIL);
     await memberPage.fill("#password", E2E_MEMBER_PASSWORD);
     await memberPage.getByRole("button", { name: "Registrarme" }).click();

@@ -26,14 +26,18 @@ import { z } from "zod";
  * lock out every account created before the policy tightened, and the hash
  * carries no length to inspect anyway. The minimum length policy lives with
  * `scripts/set-password.ts` and the future registration flow.
+ *
+ * `identifier` replaced `email` in D86: members may log in with the address
+ * they registered with, their cédula, or their username. It is therefore NOT
+ * validated as an email on the client — `z.email()` here would reject exactly
+ * the two new legitimate forms.
  */
 export const loginSchema = z.object({
-  email: z
-    .string({ error: "El correo es obligatorio" })
+  identifier: z
+    .string({ error: "Ingresa tu correo, cédula o usuario." })
     .trim()
-    .min(1, "El correo es obligatorio")
-    .max(254, "El correo es demasiado largo")
-    .email("Ingresa un correo válido, por ejemplo nombre@dominio.com"),
+    .min(1, "Ingresa tu correo, cédula o usuario.")
+    .max(254, "El dato es demasiado largo."),
   password: z
     .string({ error: "La contraseña es obligatoria" })
     .min(1, "La contraseña es obligatoria")

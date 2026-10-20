@@ -93,6 +93,7 @@ const PRISMA_NATIVE_TOKENS = {
 
 const ENUM_TYPE_RE = /CREATE TYPE\s+(\w+)\s+AS ENUM\s*\(([\s\S]*?)\)\s*;/g;
 const CREATE_TABLE_RE = /CREATE TABLE\s+(\w+)\s*\(([\s\S]*?)\n\);/g;
+const ALTER_TABLE_RE = /ALTER\s+TABLE\s+(\w+)\s+([\s\S]*?);/g;
 const CREATE_INDEX_RE =
   /CREATE\s+(UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+(\w+)\s*(?:USING\s+\w+\s*)?\(([^)]*)\)([\s\S]*?);/g;
 
@@ -242,6 +243,36 @@ function parseSql(sqlRaw) {
       kind: unique ? "unique" : "index",
       partial: /\bWHERE\b/i.test(tail),
     });
+  }
+
+  // Additive migrations change existing tables through ALTER TABLE. Only the
+  // column-shape actions matter for the mirror: ADD [COLUMN] and
+  // ALTER [COLUMN] … SET/DROP NOT NULL. Constraints (CHECK/FK/UNIQUE) are
+  // outside the comparison, as they always were for CREATE TABLE.
+  for (const match of ddl.matchAll(ALTER_TABLE_RE)) {
+    const table = tables.get(match[1].toLowerCase());
+    if (!table) continue;
+    for (const def of splitTopLevel(match[2])) {
+      const alterColumn = def.match(
+        /^ALTER\s+COLUMN\s+"?(\w+)"?\s+(DROP|SET)\s+NOT\s+NULL/i,
+      );
+      if (alterColumn) {
+        const column = table.columns.get(alterColumn[1].toLowerCase());
+        if (column) column.notNull = /^SET$/i.test(alterColumn[2]);
+        continue;
+      }
+      const addColumn = def.match(
+        /^ADD\s+COLUMN(?:\s+IF\s+NOT\s+EXISTS)?\s+"?(\w+)"?\s+([A-Za-z_][\w]*)\s*(\([^)]*\))?([\s\S]*)$/i,
+      );
+      if (addColumn) {
+        table.columns.set(addColumn[1].toLowerCase(), {
+          type: normaliseSqlType(
+            `${addColumn[2]}${addColumn[3] ? addColumn[3].replace(/\s+/g, "") : ""}`,
+          ),
+          notNull: /\bNOT\s+NULL\b/i.test(addColumn[4] ?? ""),
+        });
+      }
+    }
   }
 
   return { enums, tables, indexes };

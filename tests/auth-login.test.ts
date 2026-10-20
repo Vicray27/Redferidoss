@@ -15,13 +15,15 @@ import type { AuthUserRow } from "../lib/users";
  * `authenticate` takes every dependency as a parameter, so these tests drive
  * all of its security-relevant branches — including the two that are easy to
  * regress silently: the identical message for "no such user" and "wrong
- * password", and the timing burn on the unknown-email path.
+ * password", and the timing burn on the unknown-identifier path.
  */
 
 const ROOT: AuthUserRow = {
   id: "8f2b5a1e-0000-4000-8000-000000000001",
   publicCode: "JJGYCMQ1",
   email: "root@example.com",
+  username: "root",
+  nationalId: "V-00000001",
   passwordHash: "$argon2id$v=19$m=19456,t=2,p=1$aaaa$bbbb",
   fullName: "Administrador ROOT",
   role: "ROOT",
@@ -45,8 +47,8 @@ function deps(options: {
   return {
     calls,
     deps: {
-      async findUserByEmail(email) {
-        calls.push(`findByEmail(${email})`);
+      async findUserByIdentifier(identifier) {
+        calls.push(`findByIdentifier(${identifier})`);
         if (options.throwOn === "find") throw new Error("database is down");
         return user;
       },
@@ -82,10 +84,19 @@ describe("authenticate — success", () => {
       fullName: "Administrador ROOT",
     });
     expect(calls).toEqual([
-      "findByEmail(root@example.com)",
+      "findByIdentifier(root@example.com)",
       "verifyPassword(real,correcta)",
       "issueToken(ROOT)",
     ]);
+  });
+
+  it("accepts an email, cédula or username and passes it to the repository", async () => {
+    for (const identifier of ["root@example.com", "V-00000001", "root"]) {
+      const { deps: d, calls } = deps();
+      const result = await authenticate(identifier, "correcta", d);
+      expect(result.ok).toBe(true);
+      expect(calls[0]).toBe(`findByIdentifier(${identifier})`);
+    }
   });
 
   it("never burns time on the success path: the real verification already did", async () => {
@@ -104,7 +115,7 @@ describe("authenticate — success", () => {
 });
 
 describe("authenticate — no user enumeration", () => {
-  it("returns the SAME message for an unknown email and a wrong password", async () => {
+  it("returns the SAME message for an unknown identifier and a wrong password", async () => {
     const unknown = await authenticate("nadie@example.com", "correcta", deps({ user: null }).deps);
     const wrong = await authenticate("root@example.com", "incorrecta", deps({ passwordMatches: false }).deps);
 
@@ -118,7 +129,7 @@ describe("authenticate — no user enumeration", () => {
     expect(wrong.message).toBe(INVALID_CREDENTIALS_MESSAGE);
   });
 
-  it("burns verification time only when the email is unknown", async () => {
+  it("burns verification time only when the identifier is unknown", async () => {
     const unknown = deps({ user: null });
     await authenticate("nadie@example.com", "correcta", unknown.deps);
     expect(unknown.calls).toContain("burn(correcta)");

@@ -20,7 +20,7 @@ test("pagos y reportes renderizan sin error de servidor", async ({ browser }) =>
   try {
     // ---- Root signs in ---------------------------------------------------
     await page.goto("/login");
-    await page.fill("#email", E2E_ROOT_EMAIL);
+    await page.fill("#identifier", E2E_ROOT_EMAIL);
     await page.fill("#password", E2E_ROOT_PASSWORD);
     await page.getByRole("button", { name: "Entrar" }).click();
     await page.waitForURL((url) => !url.pathname.startsWith("/login"));
@@ -50,7 +50,7 @@ test("el panel identifica la semana y el menú móvil navega y cierra", async ({
   try {
     // ---- Root signs in ---------------------------------------------------
     await page.goto("/login");
-    await page.fill("#email", E2E_ROOT_EMAIL);
+    await page.fill("#identifier", E2E_ROOT_EMAIL);
     await page.fill("#password", E2E_ROOT_PASSWORD);
     await page.getByRole("button", { name: "Entrar" }).click();
     await page.waitForURL((url) => !url.pathname.startsWith("/login"));
