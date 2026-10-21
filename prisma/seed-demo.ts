@@ -322,9 +322,15 @@ async function runDemoSeed(
     ? (byKey.get("payments.currency") as string)
     : "USD";
 
-  // --- Root: create only when none exists -----------------------------------
+  // --- Member root: create only when none exists -----------------------------
+  // The system ROOT seeded by `seed:root` is intentionally NOT reused: it is
+  // the developer account and lives outside the referral tree. Demo members
+  // need the single member root, which is an ADMIN when this seed creates it.
   const existingRoot = await client.$queryRaw<Array<{ id: string; email: string }>>`
-    SELECT id, email::text AS email FROM users WHERE sponsor_id IS NULL LIMIT 1
+    SELECT id, email::text AS email
+    FROM users
+    WHERE sponsor_id IS NULL AND role <> 'ROOT'
+    LIMIT 1
   `;
   let rootId: string;
   let rootPassword: string | null = null;
@@ -339,7 +345,7 @@ async function runDemoSeed(
     const inserted = await client.$queryRaw<Array<{ id: string }>>`
       INSERT INTO users (public_code, sponsor_id, role, email, password_hash, full_name, status)
       VALUES (
-        ${derivePublicCode(rootEmail)}, NULL, 'ROOT', ${rootEmail}::citext,
+        ${derivePublicCode(rootEmail)}, NULL, 'ADMIN', ${rootEmail}::citext,
         ${await hashPassword(rootPassword)}, ${"Administrador demo"}, 'ACTIVE'
       )
       ON CONFLICT DO NOTHING

@@ -256,6 +256,7 @@ export function createWeeklyReportsService(
         JOIN payment_cycles c ON c.id = w.cycle_id
         WHERE w.cycle_id = ${cycleId}::uuid
           AND u.deleted_at IS NULL
+          AND u.role <> 'ROOT'
           AND u.id <> ${actor.userId}::uuid
           ${condition}
         ORDER BY u.full_name

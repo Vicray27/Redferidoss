@@ -312,7 +312,7 @@ export function createInvitationsService(
             AND i.uses < i.max_uses
             AND (p.exclude_id IS NULL OR i.id <> p.exclude_id)) AS pending
       FROM users u, params p
-      WHERE u.id = p.user_id
+      WHERE u.id = p.user_id AND u.role <> 'ROOT'
     `;
 
     const row = rows[0];
@@ -330,7 +330,9 @@ export function createInvitationsService(
         u.depth,
         u.status::text AS status
       FROM users u
-      WHERE u.public_code = ${code} AND u.deleted_at IS NULL
+      WHERE u.public_code = ${code}
+        AND u.deleted_at IS NULL
+        AND u.role <> 'ROOT'
       LIMIT 1
     `;
     return rows[0] ?? null;
@@ -346,7 +348,9 @@ export function createInvitationsService(
         u.depth,
         u.status::text AS status
       FROM users u
-      WHERE u.id = ${id}::uuid AND u.deleted_at IS NULL
+      WHERE u.id = ${id}::uuid
+        AND u.deleted_at IS NULL
+        AND u.role <> 'ROOT'
       LIMIT 1
     `;
     return rows[0] ?? null;

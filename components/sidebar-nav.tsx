@@ -91,7 +91,8 @@ export function SidebarNav({
   const pathname = usePathname();
   const area = pathname.startsWith("/portal") ? "portal" : "admin";
   const items = area === "portal" ? PORTAL_ITEMS : ADMIN_ITEMS;
-  const crossLink = isStaffRole(role) ? STAFF_CROSSLINK[area] : null;
+  // The system ROOT is not a member, so it never gets the "Mi portal" door.
+  const crossLink = role === "ROOT" ? null : isStaffRole(role) ? STAFF_CROSSLINK[area] : null;
 
   return (
     <nav aria-label="Módulos" className="flex flex-col gap-1 px-3">

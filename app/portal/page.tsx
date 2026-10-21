@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+
 import { SessionShell } from "@/components/session-shell";
 import { requireSession } from "@/lib/auth/require";
 import { authorization } from "@/lib/authz";
@@ -9,10 +11,9 @@ import { settings } from "@/lib/settings";
 // =============================================================================
 // app/portal/page.tsx — the member-facing landing (§8.4 "Inicio").
 //
-// `requireSession`, not `requireStaffSession`: every authenticated role may
-// open /portal, including ROOT and ADMIN. They are simply not SENT here —
-// `landingPathForRole` routes them to /admin after login. Refusing them would
-// break a bookmark or a shared link to a page they are entitled to read.
+// `requireSession`, not `requireStaffSession`: ADMIN may open /portal through
+// the staff cross-link. ROOT is different: it is the developer/system account,
+// not a member, so app/portal/layout.tsx redirects it to /admin.
 //
 // The cards are the §8.4 ones that F3 can answer honestly: remaining quota,
 // network size and direct referrals. The weekly payment status needs the
@@ -24,6 +25,7 @@ export const dynamic = "force-dynamic";
 
 export default async function PortalPage() {
   const session = await requireSession("/portal");
+  if (session.role === "ROOT") redirect("/admin");
 
   const network = createNetworkService(prisma, authorization, settings);
   const invitations = createInvitationsService(prisma, settings);

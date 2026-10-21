@@ -151,7 +151,9 @@ model User {
   id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   publicCode           String       @map("public_code") @db.Text
   sponsorId            String?      @map("sponsor_id") @db.Uuid
-  /// Materialised ltree path. Root = 'root'; child = parent || fn_ltree_label(public_code).
+  /// Materialised ltree path. System ROOT = 'system'; the single member root =
+  /// 'root'; child = parent || fn_ltree_label(public_code). A ROOT account has
+  /// no downline and is excluded from member reads.
   path                 Unsupported("ltree")
   depth                Int          @default(0)
   role                 user_role    @default(MEMBER)

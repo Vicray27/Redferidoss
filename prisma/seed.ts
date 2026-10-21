@@ -2,7 +2,7 @@
 // prisma/seed.ts — idempotent F1 bootstrap (pnpm seed:root).
 //
 // Writes, in this order:
-//   1. the root user          (sponsor_id NULL, depth 0, path 'root')
+//   1. the system ROOT user   (sponsor_id NULL, role ROOT, depth 0, path 'system')
 //   2. the §6 settings catalog (lib/settings-catalog.ts)
 //   3. the base payment_methods catalog (§5.6)
 //   4. the current payment cycle (§5.4 bounds from §6 settings)
@@ -46,7 +46,9 @@ import { SETTINGS_CATALOG, type CatalogEntry } from "../lib/settings-catalog";
  * `ROOT_ALREADY_EXISTS` from inside the trigger instead of being swallowed by
  * ON CONFLICT. The check below has to run first. (A concurrent double-seed can
  * still race between the SELECT and the INSERT; the seed is a single operator
- * action, and the partial unique index `uq_users_single_root` is the backstop.)
+ * action, and `uq_users_single_member_root` plus the ROOT path are the backstops.
+ * The system ROOT is outside the member tree; it is not the sponsor of the
+ * pastor or of anyone else.
  */
 
 /** §5.6 base catalog; the `payment_method` enum names are fixed by 0001_init. */
@@ -110,7 +112,7 @@ export async function seedDatabase(client: PrismaClient = new PrismaClient()): P
 
 async function seedRootUser(client: PrismaClient): Promise<void> {
   const existing = await client.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM users WHERE sponsor_id IS NULL LIMIT 1
+    SELECT id FROM users WHERE sponsor_id IS NULL AND role = 'ROOT' LIMIT 1
   `;
   if (existing.length > 0) {
     console.log("· root user: already present, skipped");

@@ -630,7 +630,7 @@ export function createReportsService(
                  r.id AS "reportId", r.status::text AS "offeringStatus", r.amount::text AS amount,
                  r.currency, COALESCE(r.label, r.method::text) AS method, r.paid_at AS "paidAt"
           FROM users u
-          LEFT JOIN users s ON s.id = u.sponsor_id
+          LEFT JOIN users s ON s.id = u.sponsor_id AND s.role <> 'ROOT'
           LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
           LEFT JOIN LATERAL (
             -- One offering per person: the live report (PENDING/APPROVED) when it
@@ -646,6 +646,7 @@ export function createReportsService(
             LIMIT 1
           ) r ON true
           WHERE u.deleted_at IS NULL
+            AND u.role <> 'ROOT'
             AND (
               EXISTS (SELECT 1 FROM cycle_obligations o WHERE o.cycle_id = ${cycle.id}::uuid AND o.user_id = u.id)
               OR w.id IS NOT NULL
@@ -680,7 +681,7 @@ export function createReportsService(
                  r.id AS "reportId", r.status::text AS "offeringStatus", r.amount::text AS amount,
                  r.currency, COALESCE(r.label, r.method::text) AS method, r.paid_at AS "paidAt"
           FROM users u
-          LEFT JOIN users s ON s.id = u.sponsor_id
+          LEFT JOIN users s ON s.id = u.sponsor_id AND s.role <> 'ROOT'
           LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
           LEFT JOIN LATERAL (
             SELECT r.id, r.status, r.amount, r.currency, r.method, r.paid_at, pm.label
@@ -691,6 +692,7 @@ export function createReportsService(
             LIMIT 1
           ) r ON true
           WHERE u.deleted_at IS NULL
+            AND u.role <> 'ROOT'
             AND (
               EXISTS (SELECT 1 FROM cycle_obligations o WHERE o.cycle_id = ${cycle.id}::uuid AND o.user_id = u.id)
               OR w.id IS NOT NULL
@@ -714,7 +716,7 @@ export function createReportsService(
                  SUM(r.amount) FILTER (WHERE r.status = 'APPROVED')::text AS "amountApproved",
                  array_agg(DISTINCT r.currency) FILTER (WHERE r.status IN ('PENDING', 'APPROVED')) AS currencies
           FROM users u
-          LEFT JOIN users s ON s.id = u.sponsor_id
+          LEFT JOIN users s ON s.id = u.sponsor_id AND s.role <> 'ROOT'
           LEFT JOIN weekly_reports w ON w.user_id = u.id AND w.cycle_id = ${cycle.id}::uuid
           LEFT JOIN LATERAL (
             SELECT r.id, r.status, r.amount, r.currency, r.method, r.paid_at, pm.label
@@ -725,6 +727,7 @@ export function createReportsService(
             LIMIT 1
           ) r ON true
           WHERE u.deleted_at IS NULL
+            AND u.role <> 'ROOT'
             AND (
               EXISTS (SELECT 1 FROM cycle_obligations o WHERE o.cycle_id = ${cycle.id}::uuid AND o.user_id = u.id)
               OR w.id IS NOT NULL

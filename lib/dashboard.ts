@@ -406,8 +406,10 @@ export function createDashboardService(
               WHERE o.cycle_id = ${cycle.id}::uuid AND o.status = 'MISSED') AS "missedCount",
             (SELECT COUNT(*)::int FROM users u
               WHERE u.deleted_at IS NULL
+                AND u.role <> 'ROOT'
                 AND u.created_at >= ${cycle.startsAt} AND u.created_at < ${cycle.endsAt}) AS "newUsersCount",
-            (SELECT COUNT(*)::int FROM users u WHERE u.deleted_at IS NULL) AS "networkSize"
+            (SELECT COUNT(*)::int FROM users u
+              WHERE u.deleted_at IS NULL AND u.role <> 'ROOT') AS "networkSize"
         `,
         db.$queryRaw<WeeklySeriesPoint[]>`
           /* @dash:weekly-series */
@@ -447,6 +449,7 @@ export function createDashboardService(
           FROM payment_reports r
           JOIN users u ON u.id = r.user_id
           WHERE r.cycle_id = ${cycle.id}::uuid AND r.status = 'APPROVED'
+            AND u.role <> 'ROOT'
           GROUP BY u.id, u.full_name, u.public_code, u.depth
           ORDER BY SUM(r.amount) DESC, u.full_name ASC
           LIMIT 10
@@ -462,6 +465,8 @@ export function createDashboardService(
           JOIN payment_reports r ON r.user_id = u.id
             AND r.cycle_id = ${cycle.id}::uuid AND r.status = 'APPROVED'
           WHERE s.deleted_at IS NULL
+            AND s.role <> 'ROOT'
+            AND u.role <> 'ROOT'
           GROUP BY s.id, s.full_name, s.public_code
           ORDER BY SUM(r.amount) DESC, s.full_name ASC
           LIMIT 10
@@ -485,6 +490,7 @@ export function createDashboardService(
           JOIN cycle_obligations o ON o.cycle_id = wc.id
           JOIN users u ON u.id = o.user_id
           WHERE u.deleted_at IS NULL
+            AND u.role <> 'ROOT'
           GROUP BY wc.period_key, u.depth
           ORDER BY u.depth, wc.period_key
         `,
@@ -563,6 +569,7 @@ export function createDashboardService(
           SELECT u.id, u.full_name, u.public_code, u.depth
           FROM users u
           WHERE u.deleted_at IS NULL
+            AND u.role <> 'ROOT'
             AND (${q}::text = ''
               OR u.full_name ILIKE '%' || ${q}::text || '%'
               OR u.email::text ILIKE '%' || ${q}::text || '%'
@@ -610,6 +617,7 @@ export function createDashboardService(
         SELECT COUNT(*)::int AS total
         FROM users u
         WHERE u.deleted_at IS NULL
+          AND u.role <> 'ROOT'
           AND (${q}::text = ''
             OR u.full_name ILIKE '%' || ${q}::text || '%'
             OR u.email::text ILIKE '%' || ${q}::text || '%'
@@ -677,7 +685,10 @@ export function createDashboardService(
       requireStaff(actor);
       const rows = await db.$queryRaw<Array<{ level: number }>>`
         /* @dash:compliance-levels */
-        SELECT DISTINCT depth AS level FROM users WHERE deleted_at IS NULL ORDER BY depth
+        SELECT DISTINCT depth AS level
+        FROM users
+        WHERE deleted_at IS NULL AND role <> 'ROOT'
+        ORDER BY depth
       `;
       return rows.map((row) => Number(row.level));
     },
@@ -700,6 +711,7 @@ export function createDashboardService(
                u.email::text AS email
         FROM users u
         WHERE u.deleted_at IS NULL
+          AND u.role <> 'ROOT'
           AND (u.full_name ILIKE '%' || ${q} || '%'
             OR u.email::text ILIKE '%' || ${q} || '%'
             OR u.public_code = upper(${q}))
@@ -715,7 +727,9 @@ export function createDashboardService(
         SELECT u.id, u.full_name AS "fullName", u.public_code AS "publicCode",
                u.email::text AS email
         FROM users u
-        WHERE u.id = ${userId}::uuid AND u.deleted_at IS NULL
+        WHERE u.id = ${userId}::uuid
+          AND u.deleted_at IS NULL
+          AND u.role <> 'ROOT'
         LIMIT 1
       `;
       return rows[0] ?? null;

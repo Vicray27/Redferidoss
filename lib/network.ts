@@ -202,12 +202,18 @@ export function createNetworkService(
         u.depth,
         u.created_at  AS "joinedAt",
         u.path::text  AS cursor,
-        (SELECT count(*) FROM users c
-          WHERE c.sponsor_id = u.id AND c.deleted_at IS NULL) AS "childrenCount"
-      FROM users u
-      WHERE u.sponsor_id = ${parentId}::uuid
-        AND u.deleted_at IS NULL
-        ${condition}
+         (SELECT count(*) FROM users c
+           WHERE c.sponsor_id = u.id AND c.deleted_at IS NULL
+             AND c.role <> 'ROOT') AS "childrenCount"
+       FROM users u
+       WHERE u.sponsor_id = ${parentId}::uuid
+         AND u.deleted_at IS NULL
+         AND u.role <> 'ROOT'
+         AND EXISTS (
+           SELECT 1 FROM users p
+           WHERE p.id = ${parentId}::uuid AND p.role <> 'ROOT'
+         )
+         ${condition}
         AND (${cursor}::text IS NULL OR u.path::text > ${cursor})
       ORDER BY u.path
       LIMIT ${limit + 1}
@@ -244,9 +250,11 @@ export function createNetworkService(
         u.created_at  AS "joinedAt",
         u.path::text  AS cursor,
         (SELECT count(*) FROM users c
-          WHERE c.sponsor_id = u.id AND c.deleted_at IS NULL) AS "childrenCount"
+          WHERE c.sponsor_id = u.id AND c.deleted_at IS NULL
+            AND c.role <> 'ROOT') AS "childrenCount"
       FROM users u
       WHERE u.deleted_at IS NULL
+        AND u.role <> 'ROOT'
         ${condition}
         AND (u.full_name ILIKE '%' || ${q} || '%' OR u.public_code = upper(${q}))
       ORDER BY u.depth, u.full_name
@@ -276,10 +284,12 @@ export function createNetworkService(
         u.phone,
         u.sponsor_id::text AS "sponsorId",
         (SELECT count(*) FROM users c
-          WHERE c.sponsor_id = u.id AND c.deleted_at IS NULL) AS "childrenCount"
+          WHERE c.sponsor_id = u.id AND c.deleted_at IS NULL
+            AND c.role <> 'ROOT') AS "childrenCount"
       FROM users u
       WHERE u.id = ${targetId}::uuid
         AND u.deleted_at IS NULL
+        AND u.role <> 'ROOT'
         ${condition}
     `;
 
@@ -291,14 +301,17 @@ export function createNetworkService(
 
     let sponsor: NetworkNodeRef | null = null;
     if (row.sponsorId) {
-      // Deliberately unfiltered: the sponsor of an in-scope node is the actor,
-      // another in-scope node, or — only for the actor's OWN row — the actor's
-      // own referrer, whose name the portal shows by design (§12 "Patrocinador").
+      // The sponsor of an in-scope node is the actor, another in-scope node, or
+      // — only for the actor's OWN row — the actor's own referrer, whose name
+      // the portal shows by design (§12 "Patrocinador"). The system ROOT is
+      // never a sponsor: it is not a member and has no downline.
       const sponsorRows = await db.$queryRaw<NetworkNodeRef[]>`
         /* @net:sponsor */
         SELECT id, public_code AS "publicCode", full_name AS "fullName", depth
         FROM users
-        WHERE id = ${row.sponsorId}::uuid AND deleted_at IS NULL
+        WHERE id = ${row.sponsorId}::uuid
+          AND deleted_at IS NULL
+          AND role <> 'ROOT'
       `;
       sponsor = sponsorRows[0] ?? null;
     }
@@ -344,6 +357,7 @@ export function createNetworkService(
       JOIN users a ON a.id = sc.ancestor_id
       WHERE sc.descendant_id = ${targetId}::uuid
         AND a.deleted_at IS NULL
+        AND a.role <> 'ROOT'
         ${condition}
       ORDER BY sc.depth DESC
     `;
@@ -370,6 +384,10 @@ export function createNetworkService(
       JOIN users u ON u.id = c.descendant_id AND u.deleted_at IS NULL
       WHERE c.ancestor_id = ${root}::uuid
         AND c.depth > 0
+        AND u.role <> 'ROOT'
+        AND NOT EXISTS (
+          SELECT 1 FROM users a WHERE a.id = ${root}::uuid AND a.role = 'ROOT'
+        )
         ${condition}
     `;
 

@@ -199,6 +199,7 @@ export function createUserRepository(db: RawQueryDb): UserRepository {
         FROM users
         WHERE public_code = ${normalizePublicCode(publicCode)}
           AND deleted_at IS NULL
+          AND role <> 'ROOT'
         LIMIT 1
       `;
       return rows[0] ?? null;

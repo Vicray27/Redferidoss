@@ -754,6 +754,7 @@ export function createPaymentsService(
           WHERE cfv.entity_id = r.id
         ) cv ON true
         WHERE r.status = 'PENDING'
+          AND u.role <> 'ROOT'
           AND (${cycleId}::uuid IS NULL OR r.cycle_id = ${cycleId}::uuid)
           AND (${method}::text IS NULL OR r.method::text = ${method}::text)
           AND (${q}::text IS NULL
@@ -787,6 +788,7 @@ export function createPaymentsService(
         LEFT JOIN payment_reports r
           ON r.user_id = u.id AND r.cycle_id = ${listOptions.cycleId}::uuid AND r.status <> 'REJECTED'
         WHERE u.deleted_at IS NULL
+          AND u.role <> 'ROOT'
           AND u.id <> ${actor.userId}::uuid
           ${condition}
         ORDER BY u.full_name

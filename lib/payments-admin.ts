@@ -343,7 +343,7 @@ const FROM_SQL = Prisma.sql`
   FROM payment_reports r
   JOIN payment_cycles c ON c.id = r.cycle_id
   JOIN users u ON u.id = r.user_id
-  LEFT JOIN users s ON s.id = u.sponsor_id
+  LEFT JOIN users s ON s.id = u.sponsor_id AND s.role <> 'ROOT'
   LEFT JOIN payment_methods pm ON pm.id = r.method_id
   LEFT JOIN users rv ON rv.id = r.reviewed_by
 `;
@@ -394,7 +394,7 @@ function buildWhere(
   filters: PaymentsAdminFilters,
   scope: { fragment: Prisma.Sql; unrestricted: boolean },
 ): Prisma.Sql {
-  const conditions: Prisma.Sql[] = [];
+  const conditions: Prisma.Sql[] = [Prisma.sql`u.role <> 'ROOT'`];
 
   const scopeSql = scopeCondition(scope);
   if (scopeSql !== null) conditions.push(scopeSql);
@@ -555,6 +555,7 @@ export function createPaymentsAdminService(
                u.email::text AS email
         FROM users u
         WHERE u.deleted_at IS NULL
+          AND u.role <> 'ROOT'
         ORDER BY u.full_name
       `;
     },
@@ -588,7 +589,7 @@ export function createPaymentsAdminService(
       }
 
       const scope = await authz.scopeFilter(actor, { alias: "u" });
-      const conditions: Prisma.Sql[] = [];
+      const conditions: Prisma.Sql[] = [Prisma.sql`u.role <> 'ROOT'`];
       const scopeSql = scopeCondition(scope);
       if (scopeSql !== null) conditions.push(scopeSql);
       conditions.push(
