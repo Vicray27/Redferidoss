@@ -29,7 +29,7 @@ pnpm test                 # vitest run (963 tests, sin base de datos)
 `pnpm db:check:drift` es la red de seguridad del DDL: verifica enums,
 tablas, columnas (nombre, tipo, nulabilidad), claves primarias e índices en
 AMBAS direcciones contra **todas** las migraciones (`0001_init` …
-`0006_identity_login`), y exige que todo índice que solo existe en el SQL
+`0007_system_root`), y exige que todo índice que solo existe en el SQL
 esté listado en el bloque "Indexes NOT redeclared here" del schema.
 
 `pnpm test` cubre el otro lado: `tests/settings-catalog.test.ts` deriva del
@@ -140,8 +140,10 @@ inmediato, hay que cerrar sesión o reiniciar el contenedor `app`.
 `prisma/migrations/*/migration.sql` es la ÚNICA autoridad de DDL. `0001_init`
 trae extensions ltree/pgcrypto/citext, 7 enums, 17 tablas, índices §5, EXCLUDE
 de ciclos, triggers de árbol y `fn_user_move()`; `0002_settings_notify`,
-`0003_weekly_reports`, `0004_tree_rebuild`, `0005_mv_payment_weekly` y
-`0006_identity_login` la extienden (18 tablas en total + la vista materializada).
+`0003_weekly_reports`, `0004_tree_rebuild`, `0005_mv_payment_weekly`,
+`0006_identity_login` y `0007_system_root` la extienden (18 tablas en total +
+la vista materializada). El ROOT del sistema vive en `path = 'system'`, fuera
+del árbol de miembros; la raíz de miembros usa `path = 'root'`.
 
 `prisma/schema.prisma` es su espejo exacto: mismos enums (tipos en minúsculas,
 idénticos al SQL), mismas 18 tablas, mismos nombres de columna y tipos. Las
@@ -228,7 +230,7 @@ cd /opt/red-referidos
 # 2. Nombre de la red del stack (por defecto <stack>_default):
 docker network ls | grep <stack>
 
-# 3. Migrar (aplica todas las migraciones pendientes, 0001_init … 0006_identity_login;
+# 3. Migrar (aplica todas las migraciones pendientes, 0001_init … 0007_system_root;
 #    `migrate deploy` es idempotente, volver a correrlo no reaplica nada):
 docker run --rm -v "$PWD:/app" -w /app --network <red-del-stack> \
   -e DATABASE_URL="postgresql://referidos:<password>@postgres:5432/referidos?schema=public" \
@@ -247,7 +249,8 @@ docker exec -it <contenedor-postgres> psql -U referidos -d referidos -c '\dt'   
 docker exec -it <contenedor-postgres> psql -U referidos -d referidos \
   -c 'SELECT count(*) FROM settings;'      # 40
 docker exec -it <contenedor-postgres> psql -U referidos -d referidos \
-  -c "SELECT public_code, path, depth FROM users WHERE sponsor_id IS NULL;"   # root, 0
+  -c "SELECT role, public_code, path, depth FROM users WHERE sponsor_id IS NULL ORDER BY role;"
+# Esperado: ROOT en 'system'/0 (fuera de la red) y ADMIN en 'root'/0 (raíz de miembros).
 ```
 
 Los pasos 3 y 4 pueden ir en un solo `docker run` (`&& pnpm db:migrate &&
@@ -289,7 +292,7 @@ SELECT migration_name, finished_at IS NOT NULL AS ok FROM _prisma_migrations;
 | Síntoma | Causa | Qué hacer |
 |---|---|---|
 | `ROOT_PASSWORD is required to run the seed` | falta la variable | repetir el paso 4 con `-e ROOT_PASSWORD=...` |
-| `ROOT_ALREADY_EXISTS: only one root user is allowed` | ya había una raíz y el seed no la detectó | es el comportamiento esperado del trigger; el seed ya lo evita con su `SELECT` previo, si aparece es una doble ejecución concurrente |
+| `ROOT_ALREADY_EXISTS: only one member root is allowed` | ya había una raíz de miembros y el seed no la detectó | es el comportamiento esperado del trigger; el seed ya lo evita con su `SELECT` previo, si aparece es una doble ejecución concurrente |
 | `SETTINGS_MISSING: the setting "…" does not exist` en runtime | la base no fue sembrada | correr `pnpm seed:root` (paso 4); el error es intencional, nunca hay default |
 | `UNSUPPORTED_CYCLE_FREQUENCY` | alguien cambió `payments.frequency` a BIWEEKLY/MONTHLY | §6 no define el ancla para esas frecuencias (D12); volver a `WEEKLY` |
 
