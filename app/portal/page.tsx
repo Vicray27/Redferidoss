@@ -40,7 +40,7 @@ export default async function PortalPage() {
     <SessionShell
       session={session}
       title="Portal de referidos"
-      description="Tu red, tus invitaciones, tu semana y tus aportes."
+      description="Tu red, tus invitaciones, tu semana y tus ofrendas."
     >
       <dl className="grid gap-4 sm:grid-cols-3">
         <Stat label="Cupos disponibles" value={`${quota.left} de ${quota.max}`} />

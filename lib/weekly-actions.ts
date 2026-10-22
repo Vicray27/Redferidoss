@@ -1,7 +1,8 @@
 // =============================================================================
 // lib/weekly-actions.ts — the Server Action behind the weekly report form in
-// /portal/semana: the member records their own attendance and cell numbers
-// once per cycle (the "Visión Celular" report, D38/D44).
+// /portal/semana: the member records their own attendance and — only for the
+// pastor/member root — the cell numbers once per cycle (the "Visión Celular"
+// report, D38/D44).
 //
 // Same shape as lib/payments-actions.ts: session first, then the service, and
 // AppError becomes a message for the form. The upsert semantics (D44) and all
@@ -21,6 +22,20 @@ import { createWeeklyReportsService } from "./weekly-reports";
 export interface WeeklyActionResult {
   ok: boolean;
   message?: string;
+}
+
+/**
+ * The pastor is the single member-tree root (0007_system_root), selected with
+ * the same query the page uses. Duplicated on purpose: the page controls what
+ * is rendered, this controls what is persisted.
+ */
+async function isMemberRoot(userId: string): Promise<boolean> {
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM users
+    WHERE sponsor_id IS NULL AND role <> 'ROOT' AND deleted_at IS NULL
+    LIMIT 1
+  `;
+  return rows[0]?.id === userId;
 }
 
 export async function saveWeeklyReportAction(input: {
@@ -44,12 +59,32 @@ export async function saveWeeklyReportAction(input: {
 
   try {
     const weekly = createWeeklyReportsService(prisma, authorization);
+
+    // The form is not the security boundary: a non-pastor may still post a
+    // forged cell payload, so it is discarded here and only attendance is kept.
+    const isPastor = await isMemberRoot(session.userId);
+    const cellPayload = isPastor
+      ? {
+          ...input.counters,
+          visitors: input.visitors,
+          note: input.note ?? null,
+        }
+      : {
+          cellsTotal: 0,
+          cellsHeld: 0,
+          cellsNotHeld: 0,
+          cellAttendees: 0,
+          cellAbsentees: 0,
+          cellNewVisitors: 0,
+          cellNewCells: 0,
+          visitors: [] as string[],
+          note: null,
+        };
+
     await weekly.saveReport(toActor(session), {
       attended: input.attended,
       discipleshipAttended: input.discipleshipAttended,
-      ...input.counters,
-      visitors: input.visitors,
-      note: input.note ?? null,
+      ...cellPayload,
     });
 
     revalidatePath("/portal/semana");

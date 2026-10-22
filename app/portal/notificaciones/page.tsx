@@ -33,7 +33,7 @@ export default async function PortalNotificationsPage({
     <SessionShell
       session={session}
       title="Notificaciones"
-      description="Los avisos de tu semana y de tus aportes, en un solo lugar."
+      description="Los avisos de tu semana y de tus ofrendas, en un solo lugar."
     >
       <NotificationsInbox
         items={page.items}

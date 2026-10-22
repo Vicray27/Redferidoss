@@ -287,8 +287,8 @@ describe("cycle:reminders", () => {
     // The parameters pin the whole dedup key: the audience filters, the
     // cycleId stored in `data`, and the local date the row was created on.
     expect(insert.values).toEqual([
-      "Aporte pendiente",
-      "No registramos tu aporte de la semana 2026-W42. Envíalo antes del vencimiento para mantener tu cumplimiento.",
+      "Ofrenda pendiente",
+      "No registramos tu ofrenda de la semana 2026-W42. Envíala antes del vencimiento para mantener tu cumplimiento.",
       SOON.id,
       "2026-W42",
       SOON.id,
@@ -466,7 +466,7 @@ describe("cycle:close", () => {
     expect(notify.values).toEqual([
       "dddddddd-0000-0000-0000-000000000001",
       "Cuenta suspendida",
-      "No completaste tus aportes de varias semanas y tu cuenta quedó suspendida. Contacta a la administración para reactivarla.",
+      "No completaste tus ofrendas de varias semanas y tu cuenta quedó suspendida. Contacta a la administración para reactivarla.",
       3,
     ]);
 

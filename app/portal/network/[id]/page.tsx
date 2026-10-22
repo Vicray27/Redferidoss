@@ -179,7 +179,7 @@ export default async function NetworkNodePage({
 
       {showsSubtree ? (
         <p className="text-xs text-muted-foreground">
-          El historial de aportes de esta persona estará disponible próximamente.
+          El historial de ofrendas de esta persona estará disponible próximamente.
         </p>
       ) : null}
     </SessionShell>

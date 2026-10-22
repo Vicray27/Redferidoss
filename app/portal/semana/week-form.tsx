@@ -1,7 +1,12 @@
 "use client";
 
 // =============================================================================
-// app/portal/semana/week-form.tsx — the weekly "Visión Celular" report form.
+// app/portal/semana/week-form.tsx — the weekly report form.
+//
+// The pastor (member-tree root) fills the full "Visión Celular" report:
+// attendance, the seven cell counters, visitors and note. Everyone else only
+// marks personal attendance — the server forces the cell payload to zero for
+// them, because this form is not the security boundary.
 //
 // Prefilled from the report the member already saved this week (if any); the
 // save is an UPSERT (D44), so submitting again edits the same row until the
@@ -54,6 +59,17 @@ const COUNTER_FIELDS = [
 
 type CounterKey = (typeof COUNTER_FIELDS)[number]["key"];
 
+/** Members submit zeroed counters regardless of any hidden prefilled state. */
+const ZERO_COUNTERS: Record<CounterKey, number> = {
+  cellsTotal: 0,
+  cellsHeld: 0,
+  cellsNotHeld: 0,
+  cellAttendees: 0,
+  cellAbsentees: 0,
+  cellNewVisitors: 0,
+  cellNewCells: 0,
+};
+
 function initialCounters(defaults: WeekDefaults | null): Record<CounterKey, string> {
   const counters = {} as Record<CounterKey, string>;
   for (const field of COUNTER_FIELDS) {
@@ -65,9 +81,12 @@ function initialCounters(defaults: WeekDefaults | null): Record<CounterKey, stri
 export function WeekForm({
   defaults,
   editable,
+  canReportCells,
 }: {
   defaults: WeekDefaults | null;
   editable: boolean;
+  /** Only the pastor (member-tree root) may report the cell counters. */
+  canReportCells: boolean;
 }) {
   const router = useRouter();
   const [busy, startTransition] = useTransition();
@@ -102,23 +121,28 @@ export function WeekForm({
     event.preventDefault();
     setMessage(null);
 
-    const parsed = {} as Record<CounterKey, number>;
-    for (const field of COUNTER_FIELDS) {
-      const value = Number(counters[field.key]);
-      if (!Number.isInteger(value) || value < 0) {
-        setMessage({
-          kind: "error",
-          text: `"${field.label}" debe ser un número entero mayor o igual a 0.`,
-        });
-        return;
+    let parsed: Record<CounterKey, number> = ZERO_COUNTERS;
+    if (canReportCells) {
+      parsed = {} as Record<CounterKey, number>;
+      for (const field of COUNTER_FIELDS) {
+        const value = Number(counters[field.key]);
+        if (!Number.isInteger(value) || value < 0) {
+          setMessage({
+            kind: "error",
+            text: `"${field.label}" debe ser un número entero mayor o igual a 0.`,
+          });
+          return;
+        }
+        parsed[field.key] = value;
       }
-      parsed[field.key] = value;
     }
 
-    const visitors = visitorsText
-      .split(/(?:\r?\n|,)+/)
-      .map((name) => name.trim())
-      .filter((name) => name !== "");
+    const visitors = canReportCells
+      ? visitorsText
+          .split(/(?:\r?\n|,)+/)
+          .map((name) => name.trim())
+          .filter((name) => name !== "")
+      : [];
 
     startTransition(async () => {
       const result = await saveWeeklyReportAction({
@@ -126,7 +150,7 @@ export function WeekForm({
         discipleshipAttended,
         counters: parsed,
         visitors,
-        note: note.trim() === "" ? null : note,
+        note: canReportCells && note.trim() !== "" ? note : null,
       });
 
       if (!result.ok) {
@@ -146,11 +170,17 @@ export function WeekForm({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Reporte de la semana</CardTitle>
+          <CardTitle className="text-lg">
+            {canReportCells ? "Visión Celular de la semana" : "Asistencia de la semana"}
+          </CardTitle>
           <CardDescription>
             {defaults
-              ? "La semana cerró. Este es el reporte que quedó registrado."
-              : "La semana cerró y no registraste reporte."}
+              ? canReportCells
+                ? "La semana cerró. Este es el reporte que quedó registrado."
+                : "La semana cerró. Esta es la asistencia que quedó registrada."
+              : canReportCells
+                ? "La semana cerró y no registraste reporte."
+                : "La semana cerró y no registraste asistencia."}
           </CardDescription>
         </CardHeader>
         {defaults ? (
@@ -160,11 +190,17 @@ export function WeekForm({
               Discipulado:{" "}
               <span className="font-medium">{defaults.discipleshipAttended ? "Sí" : "No"}</span>
             </p>
-            <p>
-              Células: {defaults.cellsHeld} de {defaults.cellsTotal} · Asistentes:{" "}
-              {defaults.cellAttendees} · Visitantes nuevos: {defaults.cellNewVisitors}
-            </p>
-            {defaults.note ? <p className="text-muted-foreground">Nota: {defaults.note}</p> : null}
+            {canReportCells ? (
+              <>
+                <p>
+                  Células: {defaults.cellsHeld} de {defaults.cellsTotal} · Asistentes:{" "}
+                  {defaults.cellAttendees} · Visitantes nuevos: {defaults.cellNewVisitors}
+                </p>
+                {defaults.note ? (
+                  <p className="text-muted-foreground">Nota: {defaults.note}</p>
+                ) : null}
+              </>
+            ) : null}
           </CardContent>
         ) : null}
       </Card>
@@ -174,10 +210,13 @@ export function WeekForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Reporte de la semana</CardTitle>
+        <CardTitle className="text-lg">
+          {canReportCells ? "Visión Celular de la semana" : "Asistencia de la semana"}
+        </CardTitle>
         <CardDescription>
-          Marca tu propia asistencia y los números de tu célula. Cada persona se
-          reporta a sí misma.
+          {canReportCells
+            ? "Marca tu asistencia y los números de la Visión Celular de esta semana."
+            : "Marca tu asistencia a la reunión general y al discipulado."}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -203,79 +242,83 @@ export function WeekForm({
             </label>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 sm:grid-cols-3">
-            {COUNTER_FIELDS.map((field) => (
-              <div key={field.key} className="space-y-1">
-                <Label htmlFor={`week-${field.key}`}>{field.label}</Label>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    aria-label={`Restar ${field.label}`}
-                    onClick={() => stepCounter(field.key, -1)}
-                    className="h-9 w-9 shrink-0 p-0 text-base leading-none"
-                  >
-                    −
-                  </Button>
-                  <Input
-                    id={`week-${field.key}`}
-                    type="number"
-                    min={0}
-                    step={1}
-                    inputMode="numeric"
-                    value={counters[field.key]}
-                    onChange={(event) =>
-                      setCounters((current) => ({ ...current, [field.key]: event.target.value }))
-                    }
-                    className="text-center"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    aria-label={`Sumar ${field.label}`}
-                    onClick={() => stepCounter(field.key, 1)}
-                    className="h-9 w-9 shrink-0 p-0 text-base leading-none"
-                  >
-                    +
-                  </Button>
-                </div>
+          {canReportCells ? (
+            <>
+              <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 sm:grid-cols-3">
+                {COUNTER_FIELDS.map((field) => (
+                  <div key={field.key} className="space-y-1">
+                    <Label htmlFor={`week-${field.key}`}>{field.label}</Label>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label={`Restar ${field.label}`}
+                        onClick={() => stepCounter(field.key, -1)}
+                        className="h-9 w-9 shrink-0 p-0 text-base leading-none"
+                      >
+                        −
+                      </Button>
+                      <Input
+                        id={`week-${field.key}`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        inputMode="numeric"
+                        value={counters[field.key]}
+                        onChange={(event) =>
+                          setCounters((current) => ({ ...current, [field.key]: event.target.value }))
+                        }
+                        className="text-center"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label={`Sumar ${field.label}`}
+                        onClick={() => stepCounter(field.key, 1)}
+                        className="h-9 w-9 shrink-0 p-0 text-base leading-none"
+                      >
+                        +
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          <details
-            open={detailsOpen}
-            onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
-            className="space-y-3 rounded-md border p-3"
-          >
-            <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
-              Más detalles (visitantes y nota)
-            </summary>
+              <details
+                open={detailsOpen}
+                onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+                className="space-y-3 rounded-md border p-3"
+              >
+                <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+                  Más detalles (visitantes y nota)
+                </summary>
 
-            <div className="space-y-1">
-              <Label htmlFor="week-visitors">Visitantes (un nombre por línea)</Label>
-              <textarea
-                id="week-visitors"
-                value={visitorsText}
-                onChange={(event) => setVisitorsText(event.target.value)}
-                rows={3}
-                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground sm:text-sm"
-                placeholder="María Pérez&#10;Juan Gómez"
-              />
-            </div>
+                <div className="space-y-1">
+                  <Label htmlFor="week-visitors">Visitantes (un nombre por línea)</Label>
+                  <textarea
+                    id="week-visitors"
+                    value={visitorsText}
+                    onChange={(event) => setVisitorsText(event.target.value)}
+                    rows={3}
+                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground sm:text-sm"
+                    placeholder="María Pérez&#10;Juan Gómez"
+                  />
+                </div>
 
-            <div className="space-y-1">
-              <Label htmlFor="week-note">Nota (opcional)</Label>
-              <textarea
-                id="week-note"
-                value={note}
-                maxLength={NOTE_MAX_LENGTH}
-                onChange={(event) => setNote(event.target.value)}
-                rows={2}
-                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground sm:text-sm"
-              />
-            </div>
-          </details>
+                <div className="space-y-1">
+                  <Label htmlFor="week-note">Nota (opcional)</Label>
+                  <textarea
+                    id="week-note"
+                    value={note}
+                    maxLength={NOTE_MAX_LENGTH}
+                    onChange={(event) => setNote(event.target.value)}
+                    rows={2}
+                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-base placeholder:text-muted-foreground sm:text-sm"
+                  />
+                </div>
+              </details>
+            </>
+          ) : null}
 
           {message ? (
             <p

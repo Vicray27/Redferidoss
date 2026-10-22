@@ -27,8 +27,9 @@ const METHOD_LABELS: Record<string, string> = {
 };
 
 // =============================================================================
-// app/portal/semana/page.tsx — the member's week: Visión Celular report and
-// the offering report of the current cycle (§8.2).
+// app/portal/semana/page.tsx — the member's week: personal attendance, the
+// offering report of the current cycle (§8.2), and — only for the pastor/member
+// root — the Visión Celular numbers and the downline board.
 //
 // Two independent things live here on purpose: marking your OWN attendance
 // (weekly report) and reporting your offering. The spec makes them
@@ -66,6 +67,15 @@ export default async function WeekPage() {
   const weekly = createWeeklyReportsService(prisma, authorization);
 
   const now = new Date();
+
+  // The single member-tree root is the pastor (0007_system_root). The UI hides
+  // the cell counters from everyone else; lib/weekly-actions.ts re-checks it.
+  const memberRoots = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM users
+    WHERE sponsor_id IS NULL AND role <> 'ROOT' AND deleted_at IS NULL
+    LIMIT 1
+  `;
+  const isPastor = memberRoots[0]?.id === session.userId;
 
   const [cycles, methodRows, customFieldRows, myPaymentReports, weeklyHistory] = await Promise.all([
     prisma.$queryRaw<CycleRow[]>`
@@ -136,10 +146,16 @@ export default async function WeekPage() {
   // replaced by a confirmation and no second submission is offered.
   const livePayment =
     myPaymentReports.find((row) => row.cycleId === cycle?.id && row.status !== "REJECTED") ?? null;
-  const downline = cycle
-    ? await weekly.downlineReports(actor, { cycleId: cycle.id, limit: 25 })
-    : [];
-  const offerings = cycle ? await payments.downlineOfferings(actor, { cycleId: cycle.id, limit: 25 }) : [];
+  // Only the pastor loads the downline: ordinary members do not report or see
+  // cell numbers.
+  const downline =
+    cycle && isPastor
+      ? await weekly.downlineReports(actor, { cycleId: cycle.id, limit: 25 })
+      : [];
+  const offerings =
+    cycle && isPastor
+      ? await payments.downlineOfferings(actor, { cycleId: cycle.id, limit: 25 })
+      : [];
   const offeringByUser = new Map(offerings.map((row) => [row.userId, row]));
   const board = downline.map((row) => ({ ...row, offering: offeringByUser.get(row.userId) }));
 
@@ -170,8 +186,12 @@ export default async function WeekPage() {
   return (
     <SessionShell
       session={session}
-      title="Semana y aportes"
-      description="Tu reporte de la Visión Celular y el aporte de esta semana."
+      title="Semana y ofrendas"
+      description={
+        isPastor
+          ? "Tu asistencia, la Visión Celular y la ofrenda de esta semana."
+          : "Tu asistencia y la ofrenda de esta semana."
+      }
     >
       <section className="rounded-lg border bg-background p-4 text-sm">
         {cycle && effective ? (
@@ -223,14 +243,20 @@ export default async function WeekPage() {
             }
           />
         }
-        week={<WeekForm defaults={weeklyDefaults} editable={reportable} />}
+        week={
+          <WeekForm
+            defaults={weeklyDefaults}
+            editable={reportable}
+            canReportCells={isPastor}
+          />
+        }
       />
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight">Mis aportes</h2>
+        <h2 className="text-lg font-semibold tracking-tight">Mis ofrendas</h2>
         {myPaymentReports.length === 0 ? (
           <p className="rounded-lg border border-dashed bg-background p-4 text-sm text-muted-foreground">
-            Todavía no reportaste aportes.
+            Todavía no reportaste ofrendas.
           </p>
         ) : (
           <div className="overflow-x-auto rounded-lg border bg-background">
@@ -274,68 +300,72 @@ export default async function WeekPage() {
         )}
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight">
-          Visión Celular · las personas de tu alcance
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Ves únicamente a las personas que están dentro de tu alcance. Las
-          semanas cerradas siguen consultables.
-        </p>
-        {downline.length === 0 ? (
-          <p className="rounded-lg border border-dashed bg-background p-4 text-sm text-muted-foreground">
-            Nadie de tu alcance registró su reporte esta semana.
+      {isPastor ? (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold tracking-tight">
+            Visión Celular · las personas de tu alcance
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Ves únicamente a las personas que están dentro de tu alcance. Las
+            semanas cerradas siguen consultables.
           </p>
-        ) : (
-          <div className="overflow-x-auto rounded-lg border bg-background">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-4 py-3 font-medium">Persona</th>
-                  <th className="px-4 py-3 font-medium">Asistió</th>
-                  <th className="px-4 py-3 font-medium">Ofrenda</th>
-                  <th className="px-4 py-3 font-medium">Células</th>
-                  <th className="px-4 py-3 font-medium">Asistentes</th>
-                  <th className="px-4 py-3 font-medium">Visitantes nuevos</th>
-                  <th className="px-4 py-3 font-medium">Nota</th>
-                </tr>
-              </thead>
-              <tbody>
-                {board.map((row) => (
-                  <tr key={row.id} className="border-b last:border-0">
-                    <td className="px-4 py-3">
-                      <span className="font-medium">{row.fullName}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {row.publicCode}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">{row.attended ? "Sí" : "No"}</td>
-                    <td className="px-4 py-3">
-                      {row.offering?.hasOffering ? "Sí" : "No"}
-                      {row.offering?.amount ? (
-                        <span className="block text-xs text-muted-foreground">{row.offering.amount} {row.offering.currency}</span>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3">
-                      {row.cellsHeld} de {row.cellsTotal}
-                    </td>
-                    <td className="px-4 py-3">{row.cellAttendees}</td>
-                    <td className="px-4 py-3">{row.cellNewVisitors}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className="block max-w-[220px] truncate"
-                        title={row.note ?? undefined}
-                      >
-                        {row.note ?? "—"}
-                      </span>
-                    </td>
+          {downline.length === 0 ? (
+            <p className="rounded-lg border border-dashed bg-background p-4 text-sm text-muted-foreground">
+              Nadie de tu alcance registró su reporte esta semana.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border bg-background">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-4 py-3 font-medium">Persona</th>
+                    <th className="px-4 py-3 font-medium">Asistió</th>
+                    <th className="px-4 py-3 font-medium">Ofrenda</th>
+                    <th className="px-4 py-3 font-medium">Células</th>
+                    <th className="px-4 py-3 font-medium">Asistentes</th>
+                    <th className="px-4 py-3 font-medium">Visitantes nuevos</th>
+                    <th className="px-4 py-3 font-medium">Nota</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                </thead>
+                <tbody>
+                  {board.map((row) => (
+                    <tr key={row.id} className="border-b last:border-0">
+                      <td className="px-4 py-3">
+                        <span className="font-medium">{row.fullName}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {row.publicCode}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">{row.attended ? "Sí" : "No"}</td>
+                      <td className="px-4 py-3">
+                        {row.offering?.hasOffering ? "Sí" : "No"}
+                        {row.offering?.amount ? (
+                          <span className="block text-xs text-muted-foreground">
+                            {row.offering.amount} {row.offering.currency}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        {row.cellsHeld} de {row.cellsTotal}
+                      </td>
+                      <td className="px-4 py-3">{row.cellAttendees}</td>
+                      <td className="px-4 py-3">{row.cellNewVisitors}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className="block max-w-[220px] truncate"
+                          title={row.note ?? undefined}
+                        >
+                          {row.note ?? "—"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ) : null}
     </SessionShell>
   );
 }

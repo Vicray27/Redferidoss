@@ -62,8 +62,8 @@ test("invitar → registrar → reportar → aprobar → dashboard semanal", asy
     await memberPage.fill("#pay-amount", E2E_REPORT_AMOUNT);
     // The default method (Transferencia) requires a reference.
     await memberPage.fill("#pay-reference", "E2E-REF-0001");
-    await memberPage.getByRole("button", { name: "Enviar aporte" }).click();
-    await expect(memberPage.getByText("Aporte enviado", { exact: false })).toBeVisible();
+    await memberPage.getByRole("button", { name: "Enviar ofrenda" }).click();
+    await expect(memberPage.getByText("Ofrenda enviada", { exact: false })).toBeVisible();
 
     // ---- 5. Root sees the pending report in the weekly dashboard ---------
     await rootPage.goto("/admin");

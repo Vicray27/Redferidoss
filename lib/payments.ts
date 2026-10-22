@@ -299,8 +299,8 @@ export function createPaymentsService(
 
   const notifyReview = async (userId: string, input: { reportId: string; cycleId: string; status: ReportStatus; note: string | null }): Promise<void> => {
     const approved = input.status === "APPROVED";
-    const title = approved ? "Aporte aprobado" : "Aporte rechazado";
-    const body = approved ? "Tu aporte de la semana fue aprobado." : `Tu aporte fue rechazado: ${input.note ?? "revisa el detalle."}`;
+    const title = approved ? "Ofrenda aprobada" : "Ofrenda rechazada";
+    const body = approved ? "Tu ofrenda de la semana fue aprobada." : `Tu ofrenda fue rechazada: ${input.note ?? "revisa el detalle."}`;
     await db.$executeRaw`
       /* @pay:notify-review */
       INSERT INTO notifications (user_id, type, title, body, data)
@@ -482,7 +482,7 @@ export function createPaymentsService(
         LIMIT 1
       `;
       if (existing[0]) {
-        throw new ConflictError("Ya registraste un aporte para esta semana.", "REPORT_ALREADY_EXISTS");
+        throw new ConflictError("Ya registraste una ofrenda para esta semana.", "REPORT_ALREADY_EXISTS");
       }
 
       const authors = await db.$queryRaw<AuthorSnapshotRow[]>`
@@ -550,7 +550,7 @@ export function createPaymentsService(
         });
       } catch (error) {
         if (isUniqueViolation(error)) {
-          throw new ConflictError("Ya registraste un aporte para esta semana.", "REPORT_ALREADY_EXISTS");
+          throw new ConflictError("Ya registraste una ofrenda para esta semana.", "REPORT_ALREADY_EXISTS");
         }
         throw error;
       }

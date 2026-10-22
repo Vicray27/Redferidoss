@@ -61,7 +61,7 @@ const PORTAL_ITEMS: readonly NavItem[] = [
   { href: "/portal", label: "Inicio", icon: Home },
   { href: "/portal/network", label: "Mi red", icon: Network },
   { href: "/portal/invitations", label: "Invitaciones", icon: UserPlus },
-  { href: "/portal/semana", label: "Semana y aportes", icon: CalendarDays },
+  { href: "/portal/semana", label: "Semana y ofrendas", icon: CalendarDays },
   { href: "/portal/notificaciones", label: "Notificaciones", icon: Bell },
 ];
 

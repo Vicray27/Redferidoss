@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Red de Referidos",
-  description: "Administra tu red, tus aportes y tu cumplimiento semanal.",
+  description: "Administra tu red, tus ofrendas y tu cumplimiento semanal.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

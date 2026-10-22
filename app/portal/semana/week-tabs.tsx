@@ -14,7 +14,7 @@ import { useState, type ReactNode } from "react";
 import { Tabs, TabsPanel } from "@/components/ui/tabs";
 
 const TAB_ITEMS = [
-  { id: "aporte", label: "Aporte" },
+  { id: "aporte", label: "Ofrenda" },
   { id: "asistencia", label: "Asistencia" },
 ] as const;
 
@@ -37,7 +37,7 @@ export function WeekTabs({
         items={TAB_ITEMS}
         value={value}
         onValueChange={setValue}
-        label="Aporte y asistencia de la semana"
+        label="Ofrenda y asistencia de la semana"
       >
         <TabsPanel id="aporte">{payment}</TabsPanel>
         <TabsPanel id="asistencia">{week}</TabsPanel>

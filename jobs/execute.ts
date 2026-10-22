@@ -274,8 +274,8 @@ async function cycleReminders({ db, settings, now }: JobRunContext): Promise<Job
       SELECT
         o.user_id,
         'cycle.reminder',
-        ${"Aporte pendiente"},
-        ${`No registramos tu aporte de la semana ${cycle.periodKey}. Envíalo antes del vencimiento para mantener tu cumplimiento.`},
+        ${"Ofrenda pendiente"},
+        ${`No registramos tu ofrenda de la semana ${cycle.periodKey}. Envíala antes del vencimiento para mantener tu cumplimiento.`},
         jsonb_build_object('cycleId', ${cycle.id}, 'periodKey', ${cycle.periodKey})
       FROM cycle_obligations o
       JOIN users u ON u.id = o.user_id
@@ -400,7 +400,7 @@ async function cycleClose({ db, settings, now }: JobRunContext): Promise<JobSumm
           ${user.id}::uuid,
           'user.suspended',
           ${"Cuenta suspendida"},
-          ${"No completaste tus aportes de varias semanas y tu cuenta quedó suspendida. Contacta a la administración para reactivarla."},
+          ${"No completaste tus ofrendas de varias semanas y tu cuenta quedó suspendida. Contacta a la administración para reactivarla."},
           jsonb_build_object('reason', 'missed_grace_strikes', 'missedCount', ${user.missedCount})
         )
       `;

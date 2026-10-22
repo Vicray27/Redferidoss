@@ -18,7 +18,7 @@ export default async function Home() {
       <p className="max-w-xl text-center text-sm text-muted-foreground">
         {session
           ? `Sesión activa como ${session.fullName} (${ROLE_LABELS[session.role] ?? session.role}).`
-          : "Administra tu red, tus aportes y tu cumplimiento semanal."}
+          : "Administra tu red, tus ofrendas y tu cumplimiento semanal."}
       </p>
 
       <div className="flex gap-3">

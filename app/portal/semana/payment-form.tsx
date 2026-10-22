@@ -210,7 +210,7 @@ export function PaymentForm({
       });
 
       if (!result.ok) {
-        setMessage({ kind: "error", text: result.message ?? "No se pudo enviar el aporte." });
+        setMessage({ kind: "error", text: result.message ?? "No se pudo enviar la ofrenda." });
         const inline: Record<string, string> = {};
         const custom: Record<string, string> = {};
         for (const [field, text] of Object.entries(result.fieldErrors ?? {})) {
@@ -226,7 +226,7 @@ export function PaymentForm({
 
       setMessage({
         kind: "ok",
-        text: "Aporte enviado. Su estado queda en la lista de abajo.",
+        text: "Ofrenda enviada. Su estado queda en la lista de abajo.",
       });
       setAmount("");
       setReference("");
@@ -256,8 +256,8 @@ export function PaymentForm({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Reportar mi aporte</CardTitle>
-          <CardDescription>Ya registraste un aporte para esta semana.</CardDescription>
+          <CardTitle className="text-lg">Reportar mi ofrenda</CardTitle>
+          <CardDescription>Ya registraste una ofrenda para esta semana.</CardDescription>
         </CardHeader>
         <CardContent>
           <dl className="space-y-2 text-sm">
@@ -299,10 +299,10 @@ export function PaymentForm({
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Reportar mi aporte</CardTitle>
+          <CardTitle className="text-lg">Reportar mi ofrenda</CardTitle>
           <CardDescription>
-            El aporte se reporta mientras la semana está abierta. Cuando abra el
-            próximo ciclo vas a poder enviarlo.
+            La ofrenda se reporta mientras la semana está abierta. Cuando abra el
+            próximo ciclo vas a poder enviarla.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -312,10 +312,10 @@ export function PaymentForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Reportar mi aporte</CardTitle>
+        <CardTitle className="text-lg">Reportar mi ofrenda</CardTitle>
         <CardDescription>
-          Un aporte por semana. Si el equipo lo rechaza dentro de la semana,
-          puedes enviar uno nuevo.
+          Una ofrenda por semana. Si el equipo la rechaza dentro de la semana,
+          puedes enviar una nueva.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -474,7 +474,7 @@ export function PaymentForm({
           {fields.length > 0 ? (
             <div className="space-y-4 rounded-md border border-dashed p-3">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Datos del aporte
+                Datos de la ofrenda
               </p>
               {fields.map((field) => (
                 <FieldRenderer
@@ -500,7 +500,7 @@ export function PaymentForm({
           ) : null}
 
           <Button type="submit" disabled={busy} className="min-h-11 w-full sm:w-auto">
-            {uploading ? "Subiendo comprobante…" : busy ? "Enviando…" : "Enviar aporte"}
+            {uploading ? "Subiendo comprobante…" : busy ? "Enviando…" : "Enviar ofrenda"}
           </Button>
         </form>
       </CardContent>

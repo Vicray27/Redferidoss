@@ -73,8 +73,8 @@ class NtfFake implements NotificationsDb {
 const ITEM = {
   id: "ntf-1",
   type: "payment.reviewed",
-  title: "Aporte aprobado",
-  body: "Tu aporte de la semana fue aprobado.",
+    title: "Ofrenda aprobada",
+    body: "Tu ofrenda de la semana fue aprobada.",
   createdAt: NOW,
   readAt: null,
 };

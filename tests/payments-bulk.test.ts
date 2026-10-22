@@ -219,8 +219,8 @@ describe("reviewMany — per-item isolation", () => {
     expect(result.rejected).toBe(1);
     const [notify] = db.execCallsFor("notify-review");
     // Binds: [userId, title, body, json]. Title and body tell the story.
-    expect(String(notify.values[1])).toContain("rechazado");
-    expect(String(notify.values[2])).toContain("rechazado");
+    expect(String(notify.values[1])).toContain("rechazada");
+    expect(String(notify.values[2])).toContain("rechazada");
     expect(String(notify.values[2])).toContain("monto incorrecto");
   });
 

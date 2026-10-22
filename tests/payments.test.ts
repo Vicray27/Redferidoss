@@ -476,7 +476,7 @@ describe("reviewReport", () => {
     expect(db.execCallsFor("fulfil-obligation")).toHaveLength(1);
     const notifyValues = db.execCallsFor("notify-review")[0]?.values ?? [];
     expect(notifyValues).toContain(ACTOR.id);
-    expect(notifyValues).toContain("Aporte aprobado");
+    expect(notifyValues).toContain("Ofrenda aprobada");
     expect(db.execCallsFor("mv-refresh")).toHaveLength(1);
   });
 
@@ -515,7 +515,7 @@ describe("reviewReport", () => {
     expect(db.valuesOf("review-update")).toContain("Referencia no coincide");
     expect(db.execCallsFor("fulfil-obligation")).toHaveLength(0);
     const notifyValues = db.execCallsFor("notify-review")[0]?.values ?? [];
-    expect(notifyValues).toContain("Aporte rechazado");
+    expect(notifyValues).toContain("Ofrenda rechazada");
     expect(String(notifyValues.join(" "))).toContain("Referencia no coincide");
     // Rejections wait for the 5-minute mv:refresh tick (D67).
     expect(db.execCallsFor("mv-refresh")).toHaveLength(0);
